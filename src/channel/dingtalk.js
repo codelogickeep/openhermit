@@ -131,10 +131,8 @@ class DingTalkChannel extends EventEmitter {
         this.emit('text', text, this.userId);
       }
 
-      // 响应确认
-      if (this.client) {
-        this.client.socketCallBackResponse(res.headers?.messageId, { code: 200 });
-      }
+      // 响应确认（可选，钉钉会自动确认）
+      // 不调用 callback，让钉钉自动确认
 
     } catch (e) {
       logger.error({ error: e.message }, '解析消息失败');
@@ -192,7 +190,14 @@ class DingTalkChannel extends EventEmitter {
 
     try {
       const axios = (await import('axios')).default;
-      const accessToken = await this.client.getAccessToken();
+      const AppKey = getDingTalkAppKey();
+      const AppSecret = getDingTalkAppSecret();
+
+      // 直接获取 access_token
+      const tokenResult = await axios.get(
+        `https://oapi.dingtalk.com/gettoken?appkey=${AppKey}&appsecret=${AppSecret}`
+      );
+      const accessToken = tokenResult.data.access_token;
 
       const body = {
         at: { atUserIds: [this.userId], isAtAll: false },
