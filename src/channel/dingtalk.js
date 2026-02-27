@@ -28,6 +28,7 @@ class DingTalkChannel extends EventEmitter {
     this.userId = null;
     this.mockMode = false;
     this.sessionWebhook = null;
+    this.hasWelcomed = false; // 是否已发送欢迎消息
   }
 
   /**
@@ -39,7 +40,6 @@ class DingTalkChannel extends EventEmitter {
       this.mockMode = true;
       this.connected = true;
       this.debouncedSend = debounce(this.doSend.bind(this), 1500);
-      this.sendWelcome();
       return;
     }
 
@@ -49,11 +49,11 @@ class DingTalkChannel extends EventEmitter {
     logger.info('连接钉钉 WebSocket...');
 
     try {
-      // 创建客户端实例
+      // 创建客户端实例（不过滤 debug 输出）
       this.client = new DWClient({
         clientId: AppKey,
         clientSecret: AppSecret,
-        debug: true
+        debug: false // 关闭 SDK 内部调试输出
       });
 
       // 注册消息回调
@@ -89,7 +89,7 @@ class DingTalkChannel extends EventEmitter {
         logger.info('钉钉 WebSocket 连接成功');
         this.connected = true;
         this.debouncedSend = debounce(this.doSend.bind(this), 1500);
-        this.sendWelcome();
+        // 欢迎消息在收到用户第一条消息时发送
       }
 
     } catch (error) {
@@ -97,7 +97,7 @@ class DingTalkChannel extends EventEmitter {
       this.mockMode = true;
       this.connected = true;
       this.debouncedSend = debounce(this.doSend.bind(this), 1500);
-      this.sendWelcome();
+      // 欢迎消息在收到用户第一条消息时发送
     }
   }
 
@@ -121,6 +121,13 @@ class DingTalkChannel extends EventEmitter {
 
       if (text) {
         logger.info({ text, senderId: this.userId }, '收到文本消息');
+
+        // 如果是第一条消息，发送欢迎消息
+        if (!this.hasWelcomed) {
+          this.hasWelcomed = true;
+          this.sendWelcome();
+        }
+
         this.emit('text', text, this.userId);
       }
 
