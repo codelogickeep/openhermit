@@ -61,6 +61,10 @@ cp .env.example .env
 DINGTALK_APP_KEY=your_app_key
 DINGTALK_APP_SECRET=your_app_secret
 
+# 用户 ID（可选，用于启动时主动推送消息）
+# 首次启动后，从日志中获取 senderStaffId 后填入
+# DINGTALK_USER_ID=your_sender_staff_id
+
 # 工作目录白名单（必填）
 # 只允许在此目录下操作
 ALLOWED_ROOT_DIR=/Users/xxx/projects
@@ -70,7 +74,25 @@ ALLOWED_ROOT_DIR=/Users/xxx/projects
 # ANTHROPIC_BASE_URL=https://your-proxy.com/v1
 ```
 
-### 4. 启动应用
+### 4. 获取 senderStaffId（可选）
+
+如果需要在服务启动时主动推送消息给你，需要配置 `DINGTALK_USER_ID`：
+
+1. 首次启动应用：`npm start`
+2. 在钉钉发送任意消息给机器人
+3. 查看控制台输出，找到 `senderStaffId` 字段：
+   ```
+   === DingTalk 消息详情 ===
+   {
+     "senderStaffId": "122425200536277570",
+     ...
+   }
+   =========================
+   ```
+4. 将获取到的 ID 填入 `.env` 文件的 `DINGTALK_USER_ID` 中
+5. 重启应用：`npm start`
+
+### 6. 启动应用
 
 ```bash
 npm start
@@ -94,7 +116,7 @@ CPU: x 核
 [INFO] OpenHermit 启动完成
 ```
 
-### 5. 在钉钉中使用
+### 7. 在钉钉中使用
 
 首次连接会收到欢迎消息：
 
