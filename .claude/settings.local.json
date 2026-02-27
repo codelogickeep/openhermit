@@ -22,7 +22,8 @@
       "Bash(git init && git add -A && git status)",
       "Bash(git reset && git add -A && git status)",
       "Bash(git add -A && git commit -m \"$\\(cat <<'EOF'\nfix: 优化钉钉连接日志和欢迎消息逻辑\n\n- 关闭 SDK 内部调试输出，避免泄露敏感信息\n- 欢迎消息改为用户首次发送消息时发送（获取到 sessionWebhook 后）\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\" && git push)",
-      "Bash(git add -A && git commit -m \"$\\(cat <<'EOF'\nfix: 修复钉钉 SDK API 调用问题\n\n- 移除不存在的 socketCallBackResponse 方法调用\n- 直接使用 axios 获取 access_token\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\" && git push)"
+      "Bash(git add -A && git commit -m \"$\\(cat <<'EOF'\nfix: 修复钉钉 SDK API 调用问题\n\n- 移除不存在的 socketCallBackResponse 方法调用\n- 直接使用 axios 获取 access_token\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\" && git push)",
+      "Bash(git add -A && git commit -m \"feat: 启动时主动发送消息给用户\n\n- 添加 DINGTALK_USER_ID 配置项\n- 服务启动连接钉钉成功后，自动发送就绪消息给配置的用户\n- 用户回复消息后显示 senderStaffId 用于配置\")"
     ]
   }
 }

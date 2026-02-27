@@ -73,6 +73,14 @@ export function getAnthropicBaseUrl() {
 }
 
 /**
+ * 获取钉钉用户 ID（可选）
+ * 用于启动时主动发送消息
+ */
+export function getDingTalkUserId() {
+  return get('DINGTALK_USER_ID');
+}
+
+/**
  * 检查环境依赖
  * @returns {object} 检查结果
  */
@@ -209,6 +217,7 @@ export default {
   getAllowedRootDir,
   getAnthropicApiKey,
   getAnthropicBaseUrl,
+  getDingTalkUserId,
   checkEnvironment,
   validateConfig,
   printEnvironmentInfo

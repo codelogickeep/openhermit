@@ -1,6 +1,6 @@
 import { Readable } from 'stream';
 import { EventEmitter } from 'events';
-import { getDingTalkAppKey, getDingTalkAppSecret, getAllowedRootDir } from '../config/index.js';
+import { getDingTalkAppKey, getDingTalkAppSecret, getAllowedRootDir, getDingTalkUserId } from '../config/index.js';
 import logger from '../utils/logger.js';
 import debounce from 'lodash.debounce';
 
@@ -89,7 +89,15 @@ class DingTalkChannel extends EventEmitter {
         logger.info('钉钉 WebSocket 连接成功');
         this.connected = true;
         this.debouncedSend = debounce(this.doSend.bind(this), 1500);
-        // 欢迎消息在收到用户第一条消息时发送
+
+        // 发送启动消息给配置的用户
+        const userId = getDingTalkUserId();
+        if (userId) {
+          logger.info({ userId }, '发送启动消息给用户');
+          this.sendStartupMessage(userId);
+        } else {
+          logger.info('未配置 DINGTALK_USER_ID，跳过启动消息');
+        }
       }
 
     } catch (error) {
@@ -215,6 +223,52 @@ class DingTalkChannel extends EventEmitter {
       logger.info('消息发送成功');
     } catch (error) {
       logger.error({ error: error.message }, '发送消息失败');
+    }
+  }
+
+  /**
+   * 发送启动消息（主动推送给用户）
+   */
+  async sendStartupMessage(userId) {
+    const rootDir = getAllowedRootDir();
+    const startupMsg = `🦀 老板，系统已就绪，请下达指令。
+
+当前工作目录: ${rootDir}
+
+常用命令:
+/cd <目录>  - 切换工作目录
+/ls         - 查看可选目录
+/claude     - 启动 Claude Code
+
+直接发送你的需求即可，我会立即响应！`;
+
+    // 使用钉钉发送消息 API
+    try {
+      const axios = (await import('axios')).default;
+      const AppKey = getDingTalkAppKey();
+      const AppSecret = getDingTalkAppSecret();
+
+      // 获取 access_token
+      const tokenResult = await axios.get(
+        `https://oapi.dingtalk.com/gettoken?appkey=${AppKey}&appsecret=${AppSecret}`
+      );
+      const accessToken = tokenResult.data.access_token;
+
+      // 发送消息给用户
+      await axios.post(
+        `https://oapi.dingtalk.com/robot/send?access_token=${accessToken}`,
+        {
+          msgtype: 'text',
+          text: {
+            content: startupMsg
+          },
+          userId: userId  // 使用 userId 发送
+        }
+      );
+
+      logger.info('启动消息已发送');
+    } catch (error) {
+      logger.error({ error: error.message }, '发送启动消息失败');
     }
   }
 
