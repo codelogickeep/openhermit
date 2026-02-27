@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(openspec validate implement-pty-bridge --strict --no-interactive)",
+      "Bash(openspec show implement-pty-bridge --json | head -100)",
+      "Bash(npm install 2>&1)",
+      "Bash(npm test 2>&1)",
+      "Bash(npm start 2>&1)",
+      "Bash(node -e \"const pty = require\\('node-pty'\\); console.log\\('node-pty loaded:', Object.keys\\(pty\\)\\)\" 2>&1)",
+      "Bash(npm rebuild node-pty 2>&1)",
+      "Bash(/bin/zsh -c \"echo test\" 2>&1)",
+      "Bash(node -e \"\nconst pty = require\\('node-pty'\\);\nconst child = pty.spawn\\('/bin/zsh', [], {\n  name: 'xterm-256color',\n  cols: 120,\n  rows: 30,\n  cwd: '/Users/zhengyd/OtherProject/testOpenHermit',\n  env: process.env\n}\\);\nchild.onData\\(d => console.log\\('data:', d\\)\\);\nchild.onExit\\(e => console.log\\('exit:', e\\)\\);\nsetTimeout\\(\\(\\) => { child.kill\\(\\); process.exit\\(0\\); }, 2000\\);\n\" 2>&1)",
+      "Bash(npm install node-pty@latest 2>&1)",
+      "Bash(npm rebuild node-pty --build-from-source 2>&1)",
+      "Bash(which nvm || command -v nvm || source ~/.nvm/nvm.sh 2>/dev/null && nvm --version)",
+      "Bash(source ~/.nvm/nvm.sh && nvm list)",
+      "Bash(which bun && bun --version)",
+      "Bash(node /Users/zhengyd/OpenProject/openhermit/debug-pty.js 2>&1)",
+      "Bash(mv /Users/zhengyd/OpenProject/openhermit/debug-pty.js /Users/zhengyd/OpenProject/openhermit/debug-pty.cjs && node /Users/zhengyd/OpenProject/openhermit/debug-pty.cjs 2>&1)",
+      "Bash(node /Users/zhengyd/OpenProject/openhermit/debug-pty2.cjs 2>&1)",
+      "Bash(pkill -f \"node src/index.js\" 2>/dev/null && echo \"已停止\" || echo \"未运行\")",
+      "Bash(git init && git add -A && git status)",
+      "Bash(git reset && git add -A && git status)"
+    ]
+  }
+}
