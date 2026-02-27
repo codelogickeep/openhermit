@@ -128,11 +128,10 @@ export function checkEnvironment() {
   }
 
   // 7. 检查 DingTalk SDK（仅检查是否安装，不检查网络）
-  try {
-    require('dingtalk-stream-sdk-nodejs');
-    // SDK 已安装，网络问题会在运行时处理
-  } catch (e) {
-    warnings.push('dingtalk-stream-sdk-nodejs 未安装，将使用模拟模式');
+  // 注意：ESM 模块不能用 require 检查，改用检查 node_modules 目录
+  const sdkPath = path.join(__dirname, '../../node_modules/dingtalk-stream-sdk-nodejs');
+  if (!fs.existsSync(sdkPath)) {
+    issues.push('dingtalk-stream-sdk-nodejs 未安装，请运行 npm install 安装依赖');
   }
 
   return {

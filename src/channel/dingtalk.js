@@ -59,6 +59,10 @@ class DingTalkChannel extends EventEmitter {
       // 注册消息回调
       this.client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
         logger.info({ res }, '收到消息');
+        // 打印消息详情，包含 senderStaffId，供用户配置 DINGTALK_USER_ID
+        console.log('=== DingTalk 消息详情 ===');
+        console.log(JSON.stringify(res, null, 2));
+        console.log('=========================');
         await this.handleMessage(res);
       });
 
@@ -115,6 +119,9 @@ class DingTalkChannel extends EventEmitter {
   async handleMessage(res) {
     try {
       const data = JSON.parse(res.data);
+      console.log('=== 钉钉消息完整数据 ===');
+      console.log(JSON.stringify(data, null, 2));
+      console.log('=========================');
       logger.info({ data }, '解析消息');
 
       let text = '';
@@ -124,8 +131,8 @@ class DingTalkChannel extends EventEmitter {
         text = data.content;
       }
 
-      this.sessionWebhook = data.sessionWebhook;
-      this.userId = data.senderId;
+      this.sessionWebhook = data.sessionWebhook || data.sessionWebhookUrl;
+      this.userId = data.senderId || data.senderStaffId;
 
       if (text) {
         logger.info({ text, senderId: this.userId }, '收到文本消息');
@@ -189,40 +196,86 @@ class DingTalkChannel extends EventEmitter {
 
   /**
    * 发送到钉钉
+   * 优先使用 sessionWebhook 被动回复，降级使用 batchSend 主动推送
    */
   async sendToDingTalk(text) {
-    if (!this.sessionWebhook) {
-      logger.warn('无可用 sessionWebhook，无法发送消息');
-      return;
-    }
-
     try {
       const axios = (await import('axios')).default;
       const AppKey = getDingTalkAppKey();
       const AppSecret = getDingTalkAppSecret();
 
-      // 直接获取 access_token
+      // 获取 access_token
       const tokenResult = await axios.get(
         `https://oapi.dingtalk.com/gettoken?appkey=${AppKey}&appsecret=${AppSecret}`
       );
       const accessToken = tokenResult.data.access_token;
 
-      const body = {
-        at: { atUserIds: [this.userId], isAtAll: false },
-        text: { content: text },
-        msgtype: 'text'
-      };
+      // 优先使用 sessionWebhook 被动回复
+      if (this.sessionWebhook) {
+        try {
+          const body = {
+            at: { atUserIds: [this.userId], isAtAll: false },
+            text: { content: text },
+            msgtype: 'text'
+          };
 
-      await axios({
-        url: this.sessionWebhook,
-        method: 'POST',
-        data: body,
-        headers: { 'x-acs-dingtalk-access-token': accessToken }
-      });
+          await axios({
+            url: this.sessionWebhook,
+            method: 'POST',
+            data: body,
+            headers: { 'x-acs-dingtalk-access-token': accessToken }
+          });
 
-      logger.info('消息发送成功');
+          logger.info('消息发送成功（sessionWebhook）');
+          return;
+        } catch (webhookError) {
+          logger.warn({ error: webhookError.message }, 'sessionWebhook 发送失败，尝试降级推送');
+        }
+      }
+
+      // 降级：使用 batchSend 主动推送
+      await this.batchSend(text, accessToken);
+
     } catch (error) {
-      logger.error({ error: error.message }, '发送消息失败');
+      logger.error({ error: error.response?.data || error.message }, '发送消息失败');
+    }
+  }
+
+  /**
+   * 使用 batchSend API 主动推送消息
+   */
+  async batchSend(text, accessToken) {
+    const userId = getDingTalkUserId();
+    if (!userId) {
+      logger.warn('未配置 DINGTALK_USER_ID，无法主动推送消息');
+      return;
+    }
+
+    const axios = (await import('axios')).default;
+    const robotCode = getDingTalkAppKey();
+
+    const body = {
+      robotCode: robotCode,
+      userIds: [userId],
+      msgKey: 'sampleText',
+      msgParam: JSON.stringify({ content: text })
+    };
+
+    try {
+      await axios.post(
+        'https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend',
+        body,
+        {
+          headers: {
+            'x-acs-dingtalk-access-token': accessToken,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      logger.info('消息发送成功（batchSend 主动推送）');
+    } catch (error) {
+      logger.error({ error: error.response?.data || error.message }, 'batchSend 发送失败');
     }
   }
 
