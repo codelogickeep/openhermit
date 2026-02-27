@@ -7,6 +7,17 @@ import logger from './utils/logger.js';
 
 // 全局异常处理
 process.on('unhandledRejection', (reason, promise) => {
+  // 忽略钉钉连接失败（网络问题）
+  if (reason && (reason.code === 'ECONNRESET' || reason.code === 'ETIMEDOUT' || reason.code === 'ENOTFOUND')) {
+    logger.warn({ code: reason.code, message: reason.message }, '钉钉连接失败，将使用模拟模式');
+    return;
+  }
+  // 打印详细错误信息
+  console.error('=== 未处理的 Promise 拒绝 ===');
+  console.error('Error:', reason);
+  if (reason && reason.stack) {
+    console.error('Stack:', reason.stack);
+  }
   logger.error({ reason }, '未处理的 Promise 拒绝');
 });
 

@@ -20,7 +20,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "dingtalk-stream-sdk-nodejs": "^1.0.0",
+    "axios": "^1.6.0",
+    "dingtalk-stream-sdk-nodejs": "^2.0.4",
     "dotenv": "^16.3.1",
     "lodash.debounce": "^4.0.8",
     "node-pty": "^1.1.0",

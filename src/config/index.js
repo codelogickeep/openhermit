@@ -119,9 +119,10 @@ export function checkEnvironment() {
     warnings.push(`Shell 不存在: ${shell}`);
   }
 
-  // 7. 检查 DingTalk SDK
+  // 7. 检查 DingTalk SDK（仅检查是否安装，不检查网络）
   try {
     require('dingtalk-stream-sdk-nodejs');
+    // SDK 已安装，网络问题会在运行时处理
   } catch (e) {
     warnings.push('dingtalk-stream-sdk-nodejs 未安装，将使用模拟模式');
   }
