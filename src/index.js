@@ -28,6 +28,9 @@ OpenHermit (开源寄居蟹) v${packageJson.version}
   openhermit -v        显示版本号
   openhermit update    更新到最新版本
   openhermit -h        显示帮助信息
+
+详细使用文档:
+https://github.com/codelogickeep/openhermit/blob/main/README.md
 `);
   process.exit(0);
 }
