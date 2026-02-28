@@ -487,27 +487,77 @@ class OpenHermit {
     // 检测是否为交互选择（数字、y/n 等）
     const isInteraction = /^[1-9]\d*$|^y(es)?$|^n(o)?$/i.test(userMessage);
 
-    if (this.smartMode && isInteraction) {
+    // 从中文选择中提取数字（如"选择2"、"第二个"等）
+    const chineseNumberMap = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '第一个': 1, '第二个': 2, '第三个': 3 };
+    let extractedNumber = null;
+
+    // 尝试从消息中提取数字
+    const numMatch = userMessage.match(/(\d+)/);
+    if (numMatch) {
+      extractedNumber = parseInt(numMatch[1]);
+    } else {
+      // 检查中文数字
+      for (const [key, value] of Object.entries(chineseNumberMap)) {
+        if (userMessage.includes(key)) {
+          extractedNumber = value;
+          break;
+        }
+      }
+    }
+
+    if (this.smartMode && (isInteraction || extractedNumber)) {
       // 交互选择：使用 LLM 上下文分析
       try {
-        const result = await this.llmClient.contextProcess(this.terminalBuffer, userMessage);
-        logger.info({ result }, 'LLM 上下文分析结果');
+        const inputForAnalysis = extractedNumber ? String(extractedNumber) : userMessage;
+        const result = await this.llmClient.contextProcess(this.terminalBuffer, inputForAnalysis);
+        logger.info({ result, extractedNumber }, 'LLM 上下文分析结果');
 
         if (result.action) {
-          const arrowCount = result.action.arrowCount || 0;
           const selectionType = result.selectionType || 'number';
 
-          if (selectionType === 'arrow' && arrowCount > 0) {
-            let arrowInput = '';
-            for (let i = 0; i < arrowCount; i++) {
-              arrowInput += '\x1b[B';
+          if (selectionType === 'arrow') {
+            // 方向键选择模式
+            let arrowCount = result.action.arrowCount || 0;
+
+            // 如果 LLM 没有返回 arrowCount，但用户指定了选项号，计算需要按几次方向键
+            if (arrowCount === 0 && extractedNumber && extractedNumber > 1) {
+              // 假设默认选中第一个选项，需要按 (N-1) 次下箭头
+              arrowCount = extractedNumber - 1;
             }
-            arrowInput += '\r';
-            this.pty.write(arrowInput);
-          } else if (selectionType === 'arrow' && arrowCount === 0) {
-            this.pty.write('\r');
+
+            logger.info({ selectionType, arrowCount, targetOption: extractedNumber }, '🎮 方向键选择模式');
+
+            let input = '';
+            for (let i = 0; i < arrowCount; i++) {
+              input += '\x1b[B';  // 下箭头
+            }
+            input += '\r';  // 回车确认
+
+            logger.info({ input: input.replace(/\x1b/g, '\\e').replace(/\r/g, '\\r') }, '⌨️ 发送方向键序列');
+            this.pty.write(input);
+          } else if (selectionType === 'number') {
+            // 数字选择模式：直接发送数字
+            const valueToSend = extractedNumber || result.action.value;
+            logger.info({ value: valueToSend }, '📤 数字选择模式');
+            this.pty.write(String(valueToSend));
+            setTimeout(() => {
+              this.pty.write('\r');
+            }, 50);
+          } else if (selectionType === 'confirm') {
+            // y/n 确认模式
+            const valueToSend = result.action.value || (extractedNumber === 1 ? 'y' : 'n');
+            logger.info({ value: valueToSend }, '✅ 确认模式');
+            this.pty.write(valueToSend);
+            setTimeout(() => {
+              this.pty.write('\r');
+            }, 50);
           } else {
-            this.pty.write(result.action.value + '\r');
+            // 其他：直接发送
+            const valueToSend = result.action.value || (extractedNumber ? String(extractedNumber) : userMessage);
+            this.pty.write(valueToSend);
+            setTimeout(() => {
+              this.pty.write('\r');
+            }, 50);
           }
           return;
         }
@@ -517,7 +567,12 @@ class OpenHermit {
     }
 
     // 非交互或处理失败：直接透传给 Claude
-    this.pty.write(userMessage + '\r');
+    logger.info({ message: userMessage }, '📤 发送消息到 Claude 终端');
+    this.pty.write(userMessage);
+    // 延迟发送回车，确保文本先被接收
+    setTimeout(() => {
+      this.pty.write('\r');
+    }, 100);
   }
 
   /**

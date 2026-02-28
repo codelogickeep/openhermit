@@ -78,6 +78,7 @@ class PTYEngine {
       logger.warn('PTY 未启动，无法写入');
       return;
     }
+    logger.info({ data: data.replace(/\r/g, '\\r').replace(/\n/g, '\\n') }, '⌨️ PTY 写入');
     this.pty.write(data);
   }
 

@@ -7,10 +7,12 @@ import debounce from 'lodash.debounce';
 // 动态导入 ESM 模块
 let DWClient;
 let TOPIC_ROBOT;
+let EventAck;
 try {
   const module = await import('dingtalk-stream-sdk-nodejs');
   DWClient = module.DWClient;
   TOPIC_ROBOT = module.TOPIC_ROBOT;
+  EventAck = module.EventAck;
 } catch (e) {
   console.warn('无法加载钉钉 SDK，将使用模拟模式');
 }
@@ -88,8 +90,25 @@ class DingTalkChannel extends EventEmitter {
       });
 
       // 注册消息回调
-      this.client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
-        await this.handleMessage(res);
+      this.client.registerCallbackListener(TOPIC_ROBOT, async (msg) => {
+        logger.info({
+          topic: msg.headers?.topic,
+          messageId: msg.headers?.messageId
+        }, '📥 收到钉钉机器人消息');
+
+        try {
+          await this.handleMessage(msg);
+        } catch (err) {
+          logger.error({ error: err.message }, '处理消息失败');
+        }
+
+        // 手动发送确认，防止钉钉重复发送
+        try {
+          this.client.send(msg.headers.messageId, { status: 'SUCCESS' });
+          logger.debug({ messageId: msg.headers.messageId }, '已发送消息确认');
+        } catch (err) {
+          logger.warn({ error: err.message }, '发送消息确认失败');
+        }
       });
 
       // 连接
@@ -186,8 +205,8 @@ class DingTalkChannel extends EventEmitter {
         this.emit('text', text, this.userId);
       }
 
-      // 响应确认（可选，钉钉会自动确认）
-      // 不调用 callback，让钉钉自动确认
+      // 消息确认已通过 registerAllEventListener 的返回值处理
+      // 返回 EventAck.SUCCESS 防止钉钉重复发送消息
 
     } catch (e) {
       logger.error({ error: e.message }, '解析消息失败');
