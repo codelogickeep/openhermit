@@ -263,9 +263,8 @@ class OpenHermit {
 
     if (!cleanData) return;
 
-    // 记录终端输出到日志
-    const preview = cleanData.length > 200 ? cleanData.substring(0, 200) + '...' : cleanData;
-    logger.info({ output: preview, length: cleanData.length }, '📺 终端输出');
+    // 记录终端输出到日志（完整输出）
+    logger.info({ output: cleanData, length: cleanData.length }, '📺 终端输出');
 
     // 保存到终端缓冲区（用于 LLM 上下文分析）
     this.terminalBuffer += cleanData;
