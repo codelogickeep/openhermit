@@ -5,13 +5,31 @@ import fs from 'fs';
 import os from 'os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const envPath = path.resolve(__dirname, '../../.env');
+const homedir = os.homedir();
 
-// 尝试加载 .env 文件
-if (fs.existsSync(envPath)) {
-  dotenv.config({ path: envPath });
-} else {
-  console.warn('警告: 未找到 .env 文件，请复制 .env.example 为 .env 并配置');
+// 按优先级查找 .env 文件
+const envSearchPaths = [
+  process.cwd(),                           // 1. 当前工作目录
+  path.join(homedir, '.openhermit'),       // 2. ~/.openhermit/
+  path.resolve(__dirname, '../../'),       // 3. 包安装目录（源码安装）
+];
+
+let envLoaded = false;
+for (const searchPath of envSearchPaths) {
+  const envPath = path.join(searchPath, '.env');
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+    console.log(`[INFO] 加载配置文件: ${envPath}`);
+    envLoaded = true;
+    break;
+  }
+}
+
+if (!envLoaded) {
+  console.warn('警告: 未找到 .env 文件');
+  console.warn('请选择以下方式之一创建配置:');
+  console.warn('  1. 在当前目录创建: cp .env.example .env');
+  console.warn('  2. 在用户目录创建: mkdir -p ~/.openhermit && cp .env.example ~/.openhermit/.env');
 }
 
 /**
