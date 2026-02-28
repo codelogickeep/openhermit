@@ -343,78 +343,71 @@ class OpenHermit {
    */
   async handleWithContext(userMessage) {
     try {
+      // 先进行意图解析，识别用户想做什么
+      const intent = await this.intentParser.parse(userMessage);
+      logger.info({ intent }, '意图解析结果');
+
+      // 如果是 Claude 命令、Shell 命令或内置命令，直接执行
+      if (intent.type === IntentTypes.CLAUDE_COMMAND) {
+        this.executeClaudeCommand(intent.command, intent.params);
+        return;
+      }
+
+      if (intent.type === IntentTypes.SHELL_COMMAND) {
+        logger.info({ command: intent.command }, '执行 shell 命令');
+        this.channel.send(`🔧 执行命令: ${intent.command}`);
+        this.pty.write(intent.command + '\r');
+        return;
+      }
+
+      if (intent.type === IntentTypes.BUILT_IN) {
+        this.handleCommand(`${intent.command}${intent.params.path ? ' ' + intent.params.path : ''}`);
+        return;
+      }
+
+      // 对于对话交互（选择、确认等），使用上下文分析
       // 调用 LLM 进行上下文分析
       const result = await this.llmClient.contextProcess(this.terminalBuffer, userMessage);
       logger.info({ result }, 'LLM 上下文分析结果');
 
-      // 调试：打印 action 详情
-      logger.debug({
-        hasAction: !!result.action,
-        actionType: result.action?.type,
-        actionValue: result.action?.value,
-        terminalState: result.terminalState
-      }, 'action 详情');
-
       // 根据分析结果处理
       if (result.action) {
-        switch (result.action.type) {
-          case 'select':
-          case 'confirm':
-            // 选择或确认操作
-            const arrowCount = result.action.arrowCount || 0;
-            const selectionType = result.selectionType || 'number';
+        const arrowCount = result.action.arrowCount || 0;
+        const selectionType = result.selectionType || 'number';
 
-            logger.info({
-              value: result.action.value,
-              type: result.action.type,
-              selectionType,
-              arrowCount
-            }, '🎯 准备执行用户选择');
+        logger.info({
+          value: result.action.value,
+          type: result.action.type,
+          selectionType,
+          arrowCount
+        }, '🎯 准备执行用户选择');
 
-            if (selectionType === 'arrow' && arrowCount > 0) {
-              // 方向键选择：先按方向键，再回车
-              let arrowInput = '';
-              for (let i = 0; i < arrowCount; i++) {
-                arrowInput += '\x1b[B'; // 下箭头
-              }
-              arrowInput += '\r'; // 回车确认
-              this.pty.write(arrowInput);
-              logger.info({ arrowCount }, '✅ 已发送方向键+回车');
-            } else if (selectionType === 'arrow' && arrowCount === 0) {
-              // 选择默认选项：直接回车
-              this.pty.write('\r');
-              logger.info('✅ 已发送回车（选择默认选项）');
-            } else {
-              // 数字选择或确认：直接输入值
-              this.pty.write(result.action.value + '\r');
-              logger.info({ value: result.action.value }, '✅ 已写入终端');
-            }
-            break;
-
-          case 'write':
-            // 如果终端状态是 idle，需要先进行意图解析
-            if (result.terminalState === 'idle') {
-              // 降级到意图解析，识别具体命令
-              await this.handleWithIntentParsing(userMessage);
-            } else {
-              // 终端在等待输入，直接写入
-              this.pty.write(result.action.value + '\r');
-              logger.info({ value: result.action.value }, '✅ 写入终端');
-            }
-            break;
-
-          default:
-            // 默认：降级到意图解析
-            await this.handleWithIntentParsing(userMessage);
+        if (selectionType === 'arrow' && arrowCount > 0) {
+          // 方向键选择：先按方向键，再回车
+          let arrowInput = '';
+          for (let i = 0; i < arrowCount; i++) {
+            arrowInput += '\x1b[B'; // 下箭头
+          }
+          arrowInput += '\r'; // 回车确认
+          this.pty.write(arrowInput);
+          logger.info({ arrowCount }, '✅ 已发送方向键+回车');
+        } else if (selectionType === 'arrow' && arrowCount === 0) {
+          // 选择默认选项：直接回车
+          this.pty.write('\r');
+          logger.info('✅ 已发送回车（选择默认选项）');
+        } else {
+          // 数字选择或确认：直接输入值
+          this.pty.write(result.action.value + '\r');
+          logger.info({ value: result.action.value }, '✅ 已写入终端');
         }
       } else {
-        // 没有明确的 action，降级到意图解析
-        await this.handleWithIntentParsing(userMessage);
+        // 没有明确的 action，直接写入终端
+        this.pty.write(userMessage + '\r');
       }
     } catch (error) {
       logger.error({ error: error.message }, 'LLM 上下文处理失败');
-      // 降级到意图解析
-      await this.handleWithIntentParsing(userMessage);
+      // 降级：直接写入终端
+      this.pty.write(userMessage + '\r');
     }
   }
 
