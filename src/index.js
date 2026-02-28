@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { validateConfig, getAllowedRootDir, printEnvironmentInfo } from './config/index.js';
 import PTYEngine from './pty/engine.js';
 import DingTalkChannel from './channel/dingtalk.js';

@@ -1,24 +1,60 @@
 {
-  "name": "openhermit",
+  "name": "@codelogickeep/open-hermit",
   "version": "1.0.0",
-  "description": "A lightweight PTY bridge for Claude Code & local AI agents via DingTalk",
+  "description": "OpenHermit (开源寄居蟹) - A lightweight PTY bridge that connects Claude Code and local AI CLI agents to mobile messaging platforms (DingTalk). Enables remote access to your AI development environment from your phone.",
   "main": "src/index.js",
+  "bin": {
+    "openhermit": "./src/index.js"
+  },
   "type": "module",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm test"
   },
   "keywords": [
     "pty",
     "claude",
+    "claude-code",
+    "ai-agent",
+    "cli-bridge",
     "dingtalk",
-    "bridge",
-    "remote"
+    "remote-terminal",
+    "mobile-ide",
+    "terminal",
+    "ssh-alternative",
+    "developer-tools",
+    "remote-development",
+    "openhermit"
   ],
-  "author": "",
+  "author": "CodeLogicKeep",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codelogickeep/openhermit.git"
+  },
+  "homepage": "https://github.com/codelogickeep/openhermit#readme",
+  "bugs": {
+    "url": "https://github.com/codelogickeep/openhermit/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "dependencies": {
     "axios": "^1.6.0",
     "dingtalk-stream-sdk-nodejs": "^2.0.4",
@@ -31,8 +67,5 @@
   },
   "devDependencies": {
     "vitest": "^1.2.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }
