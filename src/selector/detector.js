@@ -22,14 +22,22 @@ class SelectionDetector {
       return null;
     }
 
-    // 快速规则检测
+    // 快速规则检测（优先）
     const quickResult = this.quickDetect(terminalOutput);
+
+    // 如果快速检测有高置信度结果，直接返回
     if (quickResult && quickResult.confidence >= 0.9) {
       this.lastSelection = quickResult;
       return quickResult;
     }
 
-    // LLM 增强检测
+    // 如果快速检测没有发现任何选择提示，不调用 LLM
+    // 只有当快速检测发现了可能的选择但置信度较低时，才使用 LLM 增强
+    if (!quickResult) {
+      return null;
+    }
+
+    // LLM 增强检测（仅用于低置信度的候选结果）
     if (this.llmClient.isAvailable()) {
       try {
         const llmResult = await this.llmClient.parseSelection(terminalOutput);
@@ -49,10 +57,8 @@ class SelectionDetector {
       }
     }
 
-    // 返回快速检测结果（可能为 null）
-    if (quickResult) {
-      this.lastSelection = quickResult;
-    }
+    // 返回快速检测结果（低置信度）
+    this.lastSelection = quickResult;
     return quickResult;
   }
 
@@ -66,9 +72,14 @@ class SelectionDetector {
     const claudeMatch = text.match(/\[(\d+)\/(\d+)\]/);
     if (claudeMatch) {
       const current = parseInt(claudeMatch[1]);
+      const total = parseInt(claudeMatch[2]);
       const options = extractOptions(text);
 
-      if (options.length > 0) {
+      // 更严格的验证：
+      // - 必须有选项
+      // - 当前索引必须在有效范围内
+      // - 选项数量应该与总数匹配（或接近）
+      if (options.length > 0 && current >= 1 && current <= total) {
         // 标记默认选项
         options.forEach(opt => {
           opt.isDefault = (opt.index === current);
@@ -115,6 +126,8 @@ class SelectionDetector {
 
     // 4. 数字选项列表（至少2个选项）
     const numberedOptions = extractOptions(text);
+    logger.debug({ optionCount: numberedOptions.length, options: numberedOptions }, '提取到的选项');
+
     if (numberedOptions.length >= 2) {
       return {
         type: 'number',

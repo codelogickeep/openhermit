@@ -425,6 +425,106 @@ class LLMClient {
     // 默认：直接输入
     return { input: trimmed, method: 'text' };
   }
+
+  /**
+   * 智能上下文处理
+   * 结合终端输出和用户输入，智能判断如何处理
+   * @param {string} terminalOutput - 最近的终端输出
+   * @param {string} userInput - 用户输入
+   * @returns {Promise<object>} 处理结果
+   */
+  async contextProcess(terminalOutput, userInput) {
+    if (!this.isAvailable()) {
+      return this.fallbackContextProcess(terminalOutput, userInput);
+    }
+
+    try {
+      // 截取最近的终端输出（最多 2000 字符）
+      const recentOutput = terminalOutput.slice(-2000);
+
+      const prompt = Prompts.contextProcess
+        .replace('{{terminalOutput}}', recentOutput)
+        .replace('{{userInput}}', userInput);
+
+      const response = await this.chat(prompt, {
+        temperature: 0.1,
+        maxTokens: 300,
+        systemPrompt: '你是一个终端交互助手，只返回 JSON 格式结果。准确分析终端状态和用户意图。最后一句必须是 JSON。'
+      });
+
+      // 尝试提取 JSON
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const result = JSON.parse(jsonMatch[0]);
+        logger.debug({ result }, '智能上下文处理成功');
+        return result;
+      }
+
+      throw new Error('无法从响应中提取 JSON');
+    } catch (error) {
+      logger.warn({ error: error.message }, 'LLM 智能上下文处理失败，使用规则降级');
+      return this.fallbackContextProcess(terminalOutput, userInput);
+    }
+  }
+
+  /**
+   * 降级：规则匹配上下文处理
+   * @param {string} terminalOutput - 终端输出
+   * @param {string} userInput - 用户输入
+   * @returns {object} 处理结果
+   */
+  fallbackContextProcess(terminalOutput, userInput) {
+    const trimmed = userInput.trim();
+    const lower = trimmed.toLowerCase();
+
+    // 检查终端输出中是否有选择提示
+    const hasSelection = /\d+\.\s+.+\n\d+\.\s+/.test(terminalOutput) || /\[.*\]/.test(terminalOutput);
+    const hasConfirm = /\(y\/n\)|\(yes\/no\)|\?/i.test(terminalOutput);
+
+    // 如果终端在等待输入
+    if (hasSelection || hasConfirm) {
+      // 简单数字选择
+      if (/^\d+$/.test(trimmed)) {
+        return {
+          terminalState: 'waiting_input',
+          inputType: 'selection',
+          action: { type: 'select', value: trimmed },
+          confidence: 0.9
+        };
+      }
+
+      // y/n 确认
+      if (lower === 'y' || lower === 'yes' || lower === 'n' || lower === 'no') {
+        return {
+          terminalState: 'waiting_input',
+          inputType: 'confirm',
+          action: { type: 'confirm', value: lower === 'y' || lower === 'yes' ? 'y' : 'n' },
+          confidence: 0.9
+        };
+      }
+
+      // 中文选择
+      const chineseNumbers = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '第一个': 1, '第二个': 2, '第三个': 3 };
+      for (const [key, value] of Object.entries(chineseNumbers)) {
+        if (trimmed.includes(key)) {
+          return {
+            terminalState: 'waiting_input',
+            inputType: 'selection',
+            action: { type: 'select', value: String(value) },
+            confidence: 0.85
+          };
+        }
+      }
+    }
+
+    // 默认：直接输入
+    return {
+      terminalState: 'idle',
+      inputType: 'text',
+      action: { type: 'write', value: trimmed },
+      confidence: 0.7
+    };
+  }
 }
 
 // 单例

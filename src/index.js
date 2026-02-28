@@ -58,6 +58,7 @@ const { default: logger } = await import('./utils/logger.js');
 const { getIntentParser, IntentTypes } = await import('./intent/index.js');
 const { getMarkdownFormatter } = await import('./formatter/index.js');
 const { getSelectionDetector, getSelectionHandler } = await import('./selector/index.js');
+const { getLLMClient } = await import('./llm/index.js');
 
 // 全局异常处理
 process.on('unhandledRejection', (reason, promise) => {
@@ -92,8 +93,12 @@ class OpenHermit {
     this.formatter = getMarkdownFormatter();
     this.selectionDetector = getSelectionDetector();
     this.selectionHandler = getSelectionHandler();
+    this.llmClient = getLLMClient();
     this.smartMode = !!getDashScopeApiKey(); // 智能模式：是否启用了 LLM
-    this.waitingForSelection = false; // 是否等待用户选择
+
+    // 终端输出缓冲区（用于 LLM 上下文分析）
+    this.terminalBuffer = '';
+    this.maxBufferSize = 5000; // 最大缓冲区大小
 
     // PTY 输出处理队列
     this.ptyQueue = [];
@@ -101,6 +106,36 @@ class OpenHermit {
 
     if (this.smartMode) {
       logger.info('智能交互模式已启用');
+    }
+  }
+
+  /**
+   * 初始化并测试 LLM 连接
+   */
+  async initLLM() {
+    const llmClient = getLLMClient();
+
+    // 初始化 LLM 客户端
+    if (!llmClient.isAvailable()) {
+      logger.warn('LLM 客户端初始化失败，智能功能将不可用');
+      this.smartMode = false;
+      return;
+    }
+
+    // 测试 LLM 连接
+    logger.info('正在测试 LLM 连接...');
+    try {
+      const start = Date.now();
+      const response = await llmClient.chat('Hello', {
+        maxTokens: 10,
+        systemPrompt: '你是一个测试助手。请简短回复。'
+      });
+      const elapsed = Date.now() - start;
+      logger.info({ model: llmClient.model, elapsed: `${elapsed}ms` }, 'LLM 连接测试成功');
+    } catch (error) {
+      logger.error({ error: error.message }, 'LLM 连接测试失败');
+      logger.warn('智能功能将不可用，仅使用规则匹配模式');
+      this.smartMode = false;
     }
   }
 
@@ -120,6 +155,11 @@ class OpenHermit {
     if (!validateConfig()) {
       logger.error('配置验证失败，请检查 .env 文件');
       process.exit(1);
+    }
+
+    // 初始化并测试 LLM 连接（如果配置了 DashScope API Key）
+    if (this.smartMode) {
+      await this.initLLM();
     }
 
     // 设置 PTY 数据监听
@@ -209,8 +249,11 @@ class OpenHermit {
 
     if (!cleanData) return;
 
-    // 打印日志
-    logger.debug({ data: cleanData.substring(0, 100) }, 'PTY 输出');
+    // 保存到终端缓冲区（用于 LLM 上下文分析）
+    this.terminalBuffer += cleanData;
+    if (this.terminalBuffer.length > this.maxBufferSize) {
+      this.terminalBuffer = this.terminalBuffer.slice(-this.maxBufferSize);
+    }
 
     // 检查 HITL（原有的危险命令审批逻辑）
     if (checkHitl(cleanData)) {
@@ -230,24 +273,21 @@ class OpenHermit {
       return;
     }
 
-    // 智能模式：检测选择提示（只检测，不格式化）
-    if (this.smartMode && !this.waitingForSelection) {
-      const selection = await this.selectionDetector.detect(cleanData);
-      if (selection) {
-        // 更新会话状态
-        const session = this.intentParser.getSession();
-        session.setSelection(selection.options, selection.context);
-        this.waitingForSelection = true;
-
-        // 格式化并发送选择提示
-        const formattedPrompt = this.selectionDetector.formatSelectionPrompt(selection);
-        this.channel.send(cleanData + formattedPrompt);
-        return;
+    // 格式化输出为 Markdown
+    let formattedData;
+    if (this.smartMode && cleanData.length > 100) {
+      // 使用 LLM 格式化（复杂输出）
+      try {
+        formattedData = await this.formatter.format(cleanData);
+      } catch (error) {
+        logger.warn({ error: error.message }, 'LLM 格式化失败，使用基本格式化');
+        formattedData = this.formatter.basicFormat(cleanData);
       }
+    } else {
+      // 使用基本格式化（简单输出）
+      formattedData = this.formatter.basicFormat(cleanData);
     }
 
-    // 格式化输出为 Markdown
-    const formattedData = this.formatter.basicFormat(cleanData);
     if (formattedData) {
       this.channel.send(formattedData);
     }
@@ -280,9 +320,9 @@ class OpenHermit {
       return;
     }
 
-    // 智能模式：使用意图解析器
+    // 智能模式：使用 LLM 上下文处理
     if (this.smartMode) {
-      await this.handleWithIntentParsing(trimmed);
+      await this.handleWithContext(trimmed);
       return;
     }
 
@@ -298,7 +338,88 @@ class OpenHermit {
   }
 
   /**
-   * 使用意图解析处理用户消息
+   * 使用 LLM 上下文智能处理用户消息
+   * @param {string} userMessage - 用户消息
+   */
+  async handleWithContext(userMessage) {
+    try {
+      // 调用 LLM 进行上下文分析
+      const result = await this.llmClient.contextProcess(this.terminalBuffer, userMessage);
+      logger.info({ result }, 'LLM 上下文分析结果');
+
+      // 调试：打印 action 详情
+      logger.debug({
+        hasAction: !!result.action,
+        actionType: result.action?.type,
+        actionValue: result.action?.value,
+        terminalState: result.terminalState
+      }, 'action 详情');
+
+      // 根据分析结果处理
+      if (result.action) {
+        switch (result.action.type) {
+          case 'select':
+          case 'confirm':
+            // 选择或确认操作
+            const arrowCount = result.action.arrowCount || 0;
+            const selectionType = result.selectionType || 'number';
+
+            logger.info({
+              value: result.action.value,
+              type: result.action.type,
+              selectionType,
+              arrowCount
+            }, '🎯 准备执行用户选择');
+
+            if (selectionType === 'arrow' && arrowCount > 0) {
+              // 方向键选择：先按方向键，再回车
+              let arrowInput = '';
+              for (let i = 0; i < arrowCount; i++) {
+                arrowInput += '\x1b[B'; // 下箭头
+              }
+              arrowInput += '\r'; // 回车确认
+              this.pty.write(arrowInput);
+              logger.info({ arrowCount }, '✅ 已发送方向键+回车');
+            } else if (selectionType === 'arrow' && arrowCount === 0) {
+              // 选择默认选项：直接回车
+              this.pty.write('\r');
+              logger.info('✅ 已发送回车（选择默认选项）');
+            } else {
+              // 数字选择或确认：直接输入值
+              this.pty.write(result.action.value + '\r');
+              logger.info({ value: result.action.value }, '✅ 已写入终端');
+            }
+            break;
+
+          case 'write':
+            // 如果终端状态是 idle，需要先进行意图解析
+            if (result.terminalState === 'idle') {
+              // 降级到意图解析，识别具体命令
+              await this.handleWithIntentParsing(userMessage);
+            } else {
+              // 终端在等待输入，直接写入
+              this.pty.write(result.action.value + '\r');
+              logger.info({ value: result.action.value }, '✅ 写入终端');
+            }
+            break;
+
+          default:
+            // 默认：降级到意图解析
+            await this.handleWithIntentParsing(userMessage);
+        }
+      } else {
+        // 没有明确的 action，降级到意图解析
+        await this.handleWithIntentParsing(userMessage);
+      }
+    } catch (error) {
+      logger.error({ error: error.message }, 'LLM 上下文处理失败');
+      // 降级到意图解析
+      await this.handleWithIntentParsing(userMessage);
+    }
+  }
+
+  /**
+   * 使用意图解析处理用户消息（降级方案）
    * @param {string} userMessage - 用户消息
    */
   async handleWithIntentParsing(userMessage) {
@@ -350,10 +471,21 @@ class OpenHermit {
 
     // 如果明确指定了 claude 命令或当前不在 claude 活动状态
     if (params.explicit || session.mode === 'idle') {
-      // 启动 Claude Code 并传入命令（使用单引号防止 shell 注入）
-      const escaped = command.replace(/'/g, "'\\''");
-      const claudeCmd = `claude '${escaped}'`;
-      this.channel.send(`🚀 启动 Claude Code: ${command}`);
+      // 判断是纯启动命令还是带任务的命令
+      const isStartOnly = ['开始对话', '启动', '开始', 'start'].includes(command.trim());
+
+      let claudeCmd;
+      if (isStartOnly) {
+        // 纯启动命令，直接执行 claude
+        claudeCmd = 'claude';
+        this.channel.send(`🚀 启动 Claude Code`);
+      } else {
+        // 带任务的命令，传入任务描述
+        const escaped = command.replace(/'/g, "'\\''");
+        claudeCmd = `claude '${escaped}'`;
+        this.channel.send(`🚀 启动 Claude Code: ${command}`);
+      }
+
       this.pty.write(claudeCmd + '\r');
       session.setMode('claude_active');
     } else {
@@ -372,6 +504,13 @@ class OpenHermit {
     if (intent.command === 'confirm') {
       // y/n 确认
       this.pty.write(intent.params.value + '\r');
+      // 清除等待选择状态（如果有）
+      if (this.waitingForSelection) {
+        this.waitingForSelection = false;
+        session.clearSelection();
+        this.selectionDetector.clearLastSelection();
+        logger.debug('confirm 处理完成，清除等待选择状态');
+      }
       return;
     }
 

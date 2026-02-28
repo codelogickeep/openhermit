@@ -59,42 +59,83 @@ class IntentParser {
    * @returns {Promise<object>} 意图对象
    */
   async parse(userMessage) {
-    // 1. 如果在等待选择状态，优先处理选择
-    if (this.session.isWaitingSelection()) {
+    const trimmed = userMessage.trim();
+
+    // 1. 只有极简单的输入才用快速规则（y/n、纯数字）
+    const simpleResult = this.quickParseSimple(trimmed);
+    if (simpleResult) {
+      logger.debug({ intent: simpleResult }, '简单输入，快速匹配');
+      return simpleResult;
+    }
+
+    // 2. 如果在等待选择状态，处理选择响应
+    if (this.session.isWaitingSelection() && this.session.selectionOptions.length > 0) {
       return this.parseSelectionResponse(userMessage);
     }
 
-    // 2. 快速规则匹配（不调用 LLM）
-    const quickResult = this.quickParse(userMessage);
-    if (quickResult && quickResult.confidence >= 0.95) {
-      logger.debug({ intent: quickResult }, '快速规则匹配成功');
-      return quickResult;
-    }
+    // 3. LLM 解析（主要方式）
+    if (this.llmClient.isAvailable()) {
+      try {
+        const context = {
+          sessionMode: this.session.mode,
+          hasSelection: this.session.selectionOptions.length > 0
+        };
 
-    // 3. LLM 解析
-    try {
-      const context = {
-        sessionMode: this.session.mode,
-        hasSelection: this.session.selectionOptions.length > 0
-      };
-
-      const intent = await this.llmClient.parseIntent(userMessage, context);
-
-      // 如果 LLM 返回的结果置信度较低，结合规则结果
-      if (quickResult && intent.confidence < quickResult.confidence) {
-        return quickResult;
+        const intent = await this.llmClient.parseIntent(userMessage, context);
+        return intent;
+      } catch (error) {
+        logger.warn({ error: error.message }, 'LLM 解析失败，使用规则降级');
       }
+    }
 
-      return intent;
-    } catch (error) {
-      logger.warn({ error: error.message }, 'LLM 解析失败，使用规则结果');
-      return quickResult || {
-        type: IntentTypes.CLAUDE_COMMAND,
-        command: userMessage,
-        params: {},
-        confidence: 0.5
+    // 4. 降级：使用完整规则匹配
+    return this.quickParse(trimmed);
+  }
+
+  /**
+   * 快速规则匹配 - 仅处理极简单的输入
+   * @param {string} userMessage - 用户消息
+   * @returns {object|null} 意图对象或 null
+   */
+  quickParseSimple(userMessage) {
+    const trimmed = userMessage.trim();
+    const lower = trimmed.toLowerCase();
+
+    // 空消息
+    if (!trimmed) {
+      return null;
+    }
+
+    // y/n 确认（极高频，不需要 LLM）
+    if (lower === 'y' || lower === 'yes') {
+      return {
+        type: IntentTypes.CONVERSATION,
+        command: 'confirm',
+        params: { value: 'y' },
+        confidence: 1.0
       };
     }
+    if (lower === 'n' || lower === 'no') {
+      return {
+        type: IntentTypes.CONVERSATION,
+        command: 'confirm',
+        params: { value: 'n' },
+        confidence: 1.0
+      };
+    }
+
+    // 纯数字选择（极高频，不需要 LLM）
+    if (/^\d+$/.test(trimmed)) {
+      return {
+        type: IntentTypes.CONVERSATION,
+        command: 'select',
+        params: { choice: parseInt(trimmed) },
+        confidence: 1.0
+      };
+    }
+
+    // 其他输入都走 LLM
+    return null;
   }
 
   /**
@@ -204,6 +245,19 @@ class IntentParser {
       };
     }
 
+    // 中文启动命令（启动claude、启动 claude、开启claude 等）
+    const claudeStartPatterns = ['启动claude', '启动 claude', '开启claude', '开启 claude', '运行claude', '运行 claude', 'start claude'];
+    for (const pattern of claudeStartPatterns) {
+      if (lower === pattern || trimmed === pattern) {
+        return {
+          type: IntentTypes.CLAUDE_COMMAND,
+          command: '开始对话',
+          params: { explicit: true },
+          confidence: 1.0
+        };
+      }
+    }
+
     // 常见 shell 命令（精确匹配）
     const exactShellCommands = ['ls', 'pwd', 'clear', 'exit', 'date', 'whoami'];
     if (exactShellCommands.includes(trimmed)) {
@@ -272,7 +326,13 @@ class IntentParser {
   async parseSelectionResponse(userMessage) {
     const options = this.session.selectionOptions;
 
-    // 使用 LLM 映射选择
+    // 1. 简单输入直接处理
+    const simpleResult = this.quickParseSimple(userMessage);
+    if (simpleResult) {
+      return simpleResult;
+    }
+
+    // 2. 使用 LLM 映射选择
     if (this.llmClient.isAvailable() && options.length > 0) {
       try {
         const mapping = await this.llmClient.mapSelection(options, userMessage);
@@ -286,17 +346,17 @@ class IntentParser {
           confidence: 0.9
         };
       } catch (error) {
-        logger.warn({ error: error.message }, '选择映射失败');
+        logger.warn({ error: error.message }, 'LLM 选择映射失败');
       }
     }
 
-    // 降级：规则匹配
+    // 3. 降级：规则匹配
     const quickResult = this.quickParse(userMessage);
     if (quickResult && quickResult.type === IntentTypes.CONVERSATION) {
       return quickResult;
     }
 
-    // 默认：直接作为输入
+    // 4. 默认：直接作为输入
     return {
       type: IntentTypes.CONVERSATION,
       command: 'select',

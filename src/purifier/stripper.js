@@ -16,18 +16,20 @@ export function stripAnsiCodes(data) {
 
 /**
  * 过滤控制字符
- * 保留换行和必要的格式，过滤退格等控制符
+ * 保留换行符，过滤退格和独立回车符
  * @param {string} data - 原始数据
  * @returns {string} 过滤后的数据
  */
 export function filterControlChars(data) {
-  // 过滤退格符
-  let result = data.replace(/[\b]/g, '');
+  let result = data;
 
-  // 过滤回车符（保留换行）
+  // 过滤退格符
+  result = result.replace(/[\b]/g, '');
+
+  // 过滤独立的回车符（不跟着换行符的 \r）
   result = result.replace(/\r(?!\n)/g, '');
 
-  // 过滤 ANSI 转义序列
+  // 过滤 ANSI 光标控制序列
   result = result.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
 
   return result;

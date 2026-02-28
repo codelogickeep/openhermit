@@ -23,13 +23,13 @@ class MarkdownFormatter {
     // 检测模式
     const patterns = detectPatterns(terminalOutput);
 
-    // 简单输出：直接返回
-    if (patterns.complexity <= 2 && terminalOutput.length < 500) {
+    // 极短输出（< 20 字符）：直接返回基本格式化
+    if (terminalOutput.length < 20) {
       return this.basicFormat(terminalOutput, patterns);
     }
 
-    // 复杂输出：使用 LLM 格式化
-    if (this.llmClient.isAvailable() && patterns.complexity >= 3) {
+    // 使用 LLM 格式化（如果可用且输出长度足够）
+    if (this.llmClient.isAvailable() && terminalOutput.length >= 50) {
       try {
         const formatted = await this.llmClient.formatOutput(terminalOutput);
         return this.truncate(formatted);
@@ -61,18 +61,21 @@ class MarkdownFormatter {
     // 2. 过滤终端装饰元素（prompt、边框等）
     result = this.filterTerminalDecorations(result);
 
-    // 3. 压缩多余空行
+    // 3. 过滤无意义的内容
+    result = this.filterNoise(result);
+
+    // 4. 压缩多余空行
     result = result.replace(/\n{3,}/g, '\n\n');
 
-    // 4. 去除首尾空白
+    // 5. 去除首尾空白
     result = result.trim();
 
     if (!result) return '';
 
-    // 5. 添加状态图标
+    // 6. 添加状态图标
     result = this.addStatusIcons(result, patterns);
 
-    // 6. 格式化链接
+    // 7. 格式化链接
     if (patterns.hasLinks) {
       result = this.formatLinks(result);
     }
@@ -104,6 +107,41 @@ class MarkdownFormatter {
 
       // 过滤用户输入回显
       if (/^[❯›>$]\s+\S/.test(line.trim())) return false;
+
+      return true;
+    });
+
+    return filtered.join('\n');
+  }
+
+  /**
+   * 过滤无意义的内容
+   * @param {string} text - 原始文本
+   * @returns {string} 过滤后的文本
+   */
+  filterNoise(text) {
+    const lines = text.split('\n');
+    const filtered = lines.filter(line => {
+      const trimmed = line.trim();
+
+      // 过滤空行
+      if (!trimmed) return true; // 保留空行用于后续压缩
+
+      // 过滤不完整的 file:// URL（被截断的）
+      if (/^[a-z]{1,3}le:\/\//i.test(trimmed)) return false;
+      if (/ile:\/\/|^le:\/\//i.test(trimmed)) return false;
+
+      // 过滤纯路径输出（没有实际内容）
+      if (/^\/[\w\-\.\/\s]+$/m.test(trimmed) && trimmed.length < 100) {
+        // 保留包含实际内容的路径
+        if (!trimmed.includes(' ') && !trimmed.includes(':')) return false;
+      }
+
+      // 过滤主机名相关的无意义输出
+      if (/^[\w\-\.]+\.local\/|^[\w\-]+s-MacBook/i.test(trimmed)) return false;
+
+      // 过滤纯 ANSI 控制字符残留
+      if (/^[\x00-\x1f\x7f]+$/.test(trimmed)) return false;
 
       return true;
     });

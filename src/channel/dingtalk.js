@@ -31,6 +31,8 @@ class DingTalkChannel extends EventEmitter {
     this.hasWelcomed = false; // 是否已发送欢迎消息
     this.cachedToken = null;
     this.tokenExpireAt = 0;
+    this.processedMsgIds = new Set(); // 已处理的消息 ID（去重）
+    this.msgIdExpireTime = 60000; // 消息 ID 过期时间（1分钟）
   }
 
   /**
@@ -139,6 +141,27 @@ class DingTalkChannel extends EventEmitter {
     try {
       const data = JSON.parse(res.data);
 
+      // 打印钉钉原始消息数据（用于调试）
+      logger.info({
+        msgId: data.msgId,
+        messageId: data.messageId,
+        createAt: data.createAt,
+        senderId: data.senderId,
+        senderStaffId: data.senderStaffId,
+        text: data.text?.content || data.content
+      }, '钉钉原始消息');
+
+      // 消息去重：使用消息 ID 防止重复处理
+      const msgId = data.msgId || data.messageId || `${data.senderId}_${data.createAt || Date.now()}`;
+      if (this.processedMsgIds.has(msgId)) {
+        logger.warn({ msgId }, '⏭️ 跳过重复消息');
+        return;
+      }
+
+      // 记录消息 ID
+      this.processedMsgIds.add(msgId);
+      logger.info({ msgId }, '✅ 消息已记录');
+
       let text = '';
       if (data.text && data.text.content) {
         text = data.text.content;
@@ -153,13 +176,6 @@ class DingTalkChannel extends EventEmitter {
       this.userId = this.senderStaffId || this.senderId;
 
       if (text) {
-        logger.info({
-          text,
-          senderId: this.senderId,
-          senderStaffId: this.senderStaffId,
-          senderNick: this.senderNick
-        }, '收到文本消息');
-
         // 标记已欢迎（不在收到消息时发送欢迎消息，避免干扰）
         if (!this.hasWelcomed) {
           this.hasWelcomed = true;
@@ -184,6 +200,25 @@ class DingTalkChannel extends EventEmitter {
       logger.warn('未连接钉钉，无法发送消息');
       return;
     }
+
+    // 过滤无意义的内容
+    const trimmed = text.trim();
+
+    // 只过滤单字符且非字母数字中文的内容（通常是 ANSI 控制字符残留）
+    if (trimmed.length === 1 && !/[a-zA-Z0-9\u4e00-\u9fa5]/.test(trimmed)) {
+      logger.debug({ text: trimmed }, '跳过单字符控制符');
+      return;
+    }
+
+    // 过滤纯 ANSI 控制序列（不包含可见字符）
+    if (/^[\x00-\x1f\x7f;\[\d+m\s]+$/.test(trimmed) && !/[a-zA-Z0-9\u4e00-\u9fa5]/.test(trimmed)) {
+      logger.debug({ text: trimmed }, '跳过纯 ANSI 控制序列');
+      return;
+    }
+
+    // 打印发送给钉钉的消息日志（截取前 100 字符）
+    const preview = text.length > 100 ? text.substring(0, 100) + '...' : text;
+    logger.info({ text: preview, length: text.length }, '📤 发送给钉钉');
 
     this.buffer += text;
 
