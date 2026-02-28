@@ -104,6 +104,20 @@ class OpenHermit {
     this.ptyQueue = [];
     this.isProcessingPty = false;
 
+    // 任务状态
+    this.taskStatus = {
+      isRunning: false,
+      startTime: null,
+      phase: 'idle'  // idle | thinking | acting | waiting_input | completed
+    };
+
+    // 输出缓冲（静默模式）
+    this.outputBuffer = {
+      silent: true,  // 静默模式（不实时发送）
+      pending: '',
+      maxSize: 10000  // 最大缓冲区大小
+    };
+
     if (this.smartMode) {
       logger.info('智能交互模式已启用');
     }
@@ -255,6 +269,15 @@ class OpenHermit {
       this.terminalBuffer = this.terminalBuffer.slice(-this.maxBufferSize);
     }
 
+    // 保存到输出缓冲区
+    this.outputBuffer.pending += cleanData;
+    if (this.outputBuffer.pending.length > this.outputBuffer.maxSize) {
+      this.outputBuffer.pending = this.outputBuffer.pending.slice(-this.outputBuffer.maxSize);
+    }
+
+    // 更新任务状态
+    this.updateTaskStatus(cleanData);
+
     // 检查 HITL（原有的危险命令审批逻辑）
     if (checkHitl(cleanData)) {
       // 暂停输出
@@ -265,13 +288,17 @@ class OpenHermit {
       const prompt = extractHitlPrompt(cleanData);
       const contentBeforePrompt = cleanData.slice(0, cleanData.indexOf(prompt));
       if (contentBeforePrompt) {
-        this.channel.send(contentBeforePrompt);
+        this.channel.send(contentBeforePrompt, { immediate: true });
       }
 
-      // 发送审批卡片
-      this.channel.sendActionCard(prompt);
+      // 发送审批提示
+      const cardMsg = `\n⚠️ 需要审批\n${prompt || '检测到危险命令，需要您的审批'}\n请回复 'y' 同意 或 'n' 拒绝\n`;
+      this.channel.send(cardMsg, { immediate: true });
       return;
     }
+
+    // 检测任务是否完成
+    const isCompleted = this.checkTaskCompletion(cleanData);
 
     // 格式化输出为 Markdown
     let formattedData;
@@ -289,8 +316,58 @@ class OpenHermit {
     }
 
     if (formattedData) {
-      this.channel.send(formattedData);
+      // 发送时带上上下文（任务完成状态）
+      this.channel.send(formattedData, { taskCompleted: isCompleted });
     }
+  }
+
+  /**
+   * 更新任务状态
+   * @param {string} data - PTY 输出数据
+   */
+  updateTaskStatus(data) {
+    const session = this.intentParser.getSession();
+
+    // 检测任务开始
+    if (session.mode === 'claude_active' && !this.taskStatus.isRunning) {
+      this.taskStatus.isRunning = true;
+      this.taskStatus.startTime = Date.now();
+      this.taskStatus.phase = 'thinking';
+    }
+
+    // 检测等待输入
+    if (/\(y\/n\)|\[.*\]|选择|确认|请输入|\?$/i.test(data)) {
+      this.taskStatus.phase = 'waiting_input';
+    } else if (this.taskStatus.phase === 'waiting_input') {
+      // 恢复到 thinking
+      this.taskStatus.phase = 'thinking';
+    }
+  }
+
+  /**
+   * 检测任务是否完成
+   * @param {string} data - PTY 输出数据
+   * @returns {boolean}
+   */
+  checkTaskCompletion(data) {
+    // 任务完成标志
+    const completionPatterns = [
+      /completed|finished|done|完成|成功/i,
+      /✓|✔|✅/,
+      /任务.*完成/,
+      /已.*完成/,
+      /successfully/i
+    ];
+
+    const isCompleted = completionPatterns.some(p => p.test(data));
+
+    if (isCompleted) {
+      this.taskStatus.phase = 'completed';
+      this.taskStatus.isRunning = false;
+      logger.info('任务完成检测：检测到完成标志');
+    }
+
+    return isCompleted;
   }
 
 
@@ -320,21 +397,104 @@ class OpenHermit {
       return;
     }
 
-    // 智能模式：使用 LLM 上下文处理
-    if (this.smartMode) {
-      await this.handleWithContext(trimmed);
-      return;
-    }
-
-    // 传统模式：简单命令匹配
-    // 内置命令处理
+    // 内置命令处理（优先级最高）
     if (trimmed.startsWith('/')) {
       this.handleCommand(trimmed);
       return;
     }
 
-    // 写入 PTY
-    this.pty.write(text + '\r');
+    // 根据 session mode 分发消息
+    const session = this.intentParser.getSession();
+
+    if (session.mode === 'idle') {
+      // 启动前：使用 LLM 意图解析
+      await this.handleIdleMessage(trimmed);
+    } else {
+      // 启动后：检测交互则 LLM 解析，否则直接透传
+      await this.handleActiveMessage(trimmed);
+    }
+  }
+
+  /**
+   * 处理空闲模式下的消息（Claude 启动前）
+   * @param {string} userMessage - 用户消息
+   */
+  async handleIdleMessage(userMessage) {
+    // 智能模式：使用 LLM 意图解析
+    if (this.smartMode) {
+      try {
+        const intent = await this.intentParser.parse(userMessage);
+        logger.info({ intent }, '意图解析结果');
+
+        if (intent.type === IntentTypes.CLAUDE_COMMAND) {
+          this.executeClaudeCommand(intent.command, intent.params);
+          return;
+        }
+
+        if (intent.type === IntentTypes.SHELL_COMMAND) {
+          logger.info({ command: intent.command }, '执行 shell 命令');
+          this.channel.send(`🔧 执行命令: ${intent.command}`);
+          this.pty.write(intent.command + '\r');
+          return;
+        }
+
+        if (intent.type === IntentTypes.BUILT_IN) {
+          this.handleCommand(`${intent.command}${intent.params.path ? ' ' + intent.params.path : ''}`);
+          return;
+        }
+
+        // 默认：尝试作为 Claude 命令
+        this.executeClaudeCommand(userMessage, { explicit: true });
+      } catch (error) {
+        logger.error({ error: error.message }, '意图解析失败');
+        // 降级：直接写入 PTY
+        this.pty.write(userMessage + '\r');
+      }
+    } else {
+      // 非智能模式：直接写入 PTY
+      this.pty.write(userMessage + '\r');
+    }
+  }
+
+  /**
+   * 处理活跃模式下的消息（Claude 启动后）
+   * @param {string} userMessage - 用户消息
+   */
+  async handleActiveMessage(userMessage) {
+    // 检测是否为交互选择（数字、y/n 等）
+    const isInteraction = /^[1-9]\d*$|^y(es)?$|^n(o)?$/i.test(userMessage);
+
+    if (this.smartMode && isInteraction) {
+      // 交互选择：使用 LLM 上下文分析
+      try {
+        const result = await this.llmClient.contextProcess(this.terminalBuffer, userMessage);
+        logger.info({ result }, 'LLM 上下文分析结果');
+
+        if (result.action) {
+          const arrowCount = result.action.arrowCount || 0;
+          const selectionType = result.selectionType || 'number';
+
+          if (selectionType === 'arrow' && arrowCount > 0) {
+            let arrowInput = '';
+            for (let i = 0; i < arrowCount; i++) {
+              arrowInput += '\x1b[B';
+            }
+            arrowInput += '\r';
+            this.pty.write(arrowInput);
+          } else if (selectionType === 'arrow' && arrowCount === 0) {
+            this.pty.write('\r');
+          } else {
+            this.pty.write(result.action.value + '\r');
+          }
+          return;
+        }
+      } catch (error) {
+        logger.error({ error: error.message }, 'LLM 上下文处理失败');
+      }
+    }
+
+    // 非交互或处理失败：直接透传给 Claude
+    this.pty.write(userMessage + '\r');
   }
 
   /**
@@ -549,9 +709,52 @@ class OpenHermit {
       case '/restart':
         this.handleRestart();
         break;
+      case '/status':
+        this.handleStatus();
+        break;
       default:
-        this.channel.send(`未知命令: ${cmd}\n可用命令: /cd, /ls, /restart`);
+        this.channel.send(`未知命令: ${cmd}\n可用命令: /cd, /ls, /restart, /status`);
     }
+  }
+
+  /**
+   * 处理 /status 命令
+   */
+  handleStatus() {
+    const session = this.intentParser.getSession();
+
+    let msg = '📊 当前状态\n\n';
+    msg += `会话模式: ${session.mode === 'claude_active' ? 'Claude 活跃' : '空闲'}\n`;
+    msg += `任务状态: ${this.taskStatus.isRunning ? '运行中' : '空闲'}\n`;
+
+    if (this.taskStatus.isRunning && this.taskStatus.startTime) {
+      const elapsed = Math.floor((Date.now() - this.taskStatus.startTime) / 1000);
+      const minutes = Math.floor(elapsed / 60);
+      const seconds = elapsed % 60;
+      msg += `运行时间: ${minutes}分${seconds}秒\n`;
+    }
+
+    msg += `任务阶段: ${this.taskStatus.phase}\n`;
+    msg += `静默模式: ${this.channel.silentMode ? '是' : '否'}\n`;
+
+    // 显示缓冲区状态
+    if (this.outputBuffer.pending) {
+      const previewLength = 500;
+      const preview = this.outputBuffer.pending.length > previewLength
+        ? this.outputBuffer.pending.slice(-previewLength)
+        : this.outputBuffer.pending;
+      msg += `\n📝 待发送输出 (最近 ${preview.length} 字符):\n`;
+      msg += '─'.repeat(20) + '\n';
+      msg += preview;
+    } else {
+      msg += '\n📝 待发送输出: (空)';
+    }
+
+    // 立即发送状态信息
+    this.channel.sendImmediate(msg);
+
+    // 同时刷新缓冲区内容
+    this.channel.flushBuffer();
   }
 
   /**

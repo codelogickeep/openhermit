@@ -190,24 +190,6 @@ describe('DingTalkChannel', () => {
     });
   });
 
-  describe('sendActionCard 方法', () => {
-    it('应该发送审批消息', () => {
-      channel.connected = true;
-      channel.sendActionCard('危险操作');
-
-      expect(channel.buffer).toContain('需要审批');
-      expect(channel.buffer).toContain('危险操作');
-      expect(channel.buffer).toContain("回复 'y'");
-    });
-
-    it('没有 prompt 时应该使用默认消息', () => {
-      channel.connected = true;
-      channel.sendActionCard();
-
-      expect(channel.buffer).toContain('检测到危险命令');
-    });
-  });
-
   describe('getAccessToken 方法', () => {
     it('应该返回缓存的 token', async () => {
       // 设置缓存

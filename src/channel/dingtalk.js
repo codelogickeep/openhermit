@@ -33,6 +33,8 @@ class DingTalkChannel extends EventEmitter {
     this.tokenExpireAt = 0;
     this.processedMsgIds = new Set(); // 已处理的消息 ID（去重）
     this.msgIdExpireTime = 60000; // 消息 ID 过期时间（1分钟）
+    this.silentMode = true; // 静默模式（不实时发送）
+    this.maxBufferSize = 10000; // 最大缓冲区大小
   }
 
   /**
@@ -193,9 +195,11 @@ class DingTalkChannel extends EventEmitter {
   }
 
   /**
-   * 发送文本
+   * 发送文本（带智能发送策略）
+   * @param {string} text - 文本内容
+   * @param {object} context - 上下文信息（可选）
    */
-  send(text) {
+  send(text, context = {}) {
     if (!this.connected) {
       logger.warn('未连接钉钉，无法发送消息');
       return;
@@ -216,12 +220,28 @@ class DingTalkChannel extends EventEmitter {
       return;
     }
 
-    // 打印发送给钉钉的消息日志（截取前 100 字符）
-    const preview = text.length > 100 ? text.substring(0, 100) + '...' : text;
-    logger.info({ text: preview, length: text.length }, '📤 发送给钉钉');
-
+    // 添加到缓冲区
     this.buffer += text;
 
+    // 限制缓冲区大小
+    if (this.buffer.length > this.maxBufferSize) {
+      this.buffer = this.buffer.slice(-this.maxBufferSize);
+    }
+
+    // 检查是否需要立即发送
+    if (this.shouldSendNow(text, context)) {
+      logger.debug({ text: trimmed.slice(0, 50) }, '📤 触发立即发送');
+      this.doSend();
+      return;
+    }
+
+    // 静默模式：不实时发送，保留在缓冲区
+    if (this.silentMode) {
+      logger.debug({ length: this.buffer.length }, '静默模式：输出已缓冲');
+      return;
+    }
+
+    // 非静默模式：使用防抖发送
     if (this.mockMode) {
       this.doSend();
       return;
@@ -230,6 +250,82 @@ class DingTalkChannel extends EventEmitter {
     if (this.debouncedSend) {
       this.debouncedSend();
     }
+  }
+
+  /**
+   * 判断是否需要立即发送
+   * @param {string} text - 文本内容
+   * @param {object} context - 上下文信息
+   * @returns {boolean}
+   */
+  shouldSendNow(text, context) {
+    // 1. 明确要求立即发送
+    if (context.immediate) return true;
+
+    // 2. 任务完成
+    if (context.taskCompleted) return true;
+
+    // 3. 交互提示 (y/n, 选项列表等)
+    const interactionPatterns = [
+      /\(y\/n\)/i,
+      /\[y\/n\]/i,
+      /\[.*\]/,  // 选项列表 [1] [2] 等
+      /选择/,
+      /确认/,
+      /请输入/,
+      /Please (select|choose|confirm)/i,
+      /\?$/,  // 以问号结尾
+      /^\s*\d+[\.\)]\s/m,  // 编号列表
+    ];
+    if (interactionPatterns.some(p => p.test(text))) return true;
+
+    // 4. 错误
+    if (/error|错误|失败|exception|failed/i.test(text)) return true;
+
+    // 5. HITL 审批提示
+    if (/需要审批|审批|批准|拒绝/i.test(text)) return true;
+
+    return false;
+  }
+
+  /**
+   * 强制立即发送（不经过策略）
+   * @param {string} text - 文本内容
+   */
+  sendImmediate(text) {
+    if (!this.connected) {
+      logger.warn('未连接钉钉，无法发送消息');
+      return;
+    }
+
+    const preview = text.length > 100 ? text.substring(0, 100) + '...' : text;
+    logger.info({ text: preview, length: text.length }, '📤 立即发送给钉钉');
+
+    if (this.mockMode) {
+      console.log(text);
+      return;
+    }
+
+    this.sendToDingTalk(text);
+  }
+
+  /**
+   * 手动刷新缓冲区
+   */
+  flushBuffer() {
+    if (this.buffer) {
+      logger.info({ length: this.buffer.length }, '📤 刷新缓冲区');
+      this.doSend();
+    }
+  }
+
+  /**
+   * 设置静默模式
+   * @param {boolean} silent - 是否静默
+   */
+  setSilentMode(silent) {
+    this.silentMode = silent;
+    logger.info({ silent }, `静默模式已${silent ? '启用' : '禁用'}`);
   }
 
   /**
@@ -471,14 +567,6 @@ ${dirList}
     }
 
     this.send(msg);
-  }
-
-  /**
-   * 发送 ActionCard
-   */
-  sendActionCard(prompt) {
-    const cardMsg = `\n⚠️ 需要审批\n${prompt || '检测到危险命令，需要您的审批'}\n请回复 'y' 同意 或 'n' 拒绝\n`;
-    this.send(cardMsg);
   }
 
   /**
