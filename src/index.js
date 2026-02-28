@@ -48,8 +48,6 @@ class OpenHermit {
       process.exit(1);
     }
 
-    logger.info('初始化 OpenHermit...');
-
     // 验证配置
     if (!validateConfig()) {
       logger.error('配置验证失败，请检查 .env 文件');
@@ -104,8 +102,6 @@ class OpenHermit {
 
     // 检查 HITL
     if (checkHitl(cleanData)) {
-      logger.info('检测到 HITL 提示');
-
       // 暂停输出
       this.hitlActive = true;
       this.pausedBuffer = data;
@@ -133,6 +129,21 @@ class OpenHermit {
    */
   handleChannelText(text, senderId) {
     const trimmed = text.trim();
+
+    // HITL 激活状态下，优先处理 y/n 回复
+    if (this.hitlActive) {
+      const lower = trimmed.toLowerCase();
+      if (lower === 'y' || lower === 'yes') {
+        this.handleApprove();
+        return;
+      } else if (lower === 'n' || lower === 'no') {
+        this.handleReject();
+        return;
+      }
+      // 其他文本提示用户先处理审批
+      this.channel.send('⚠️ 当前有待审批的操作，请先回复 y(同意) 或 n(拒绝)');
+      return;
+    }
 
     // 内置命令处理
     if (trimmed.startsWith('/')) {
@@ -214,12 +225,7 @@ class OpenHermit {
    * 处理审批同意
    */
   handleApprove() {
-    if (!this.hitlActive) {
-      logger.warn('未处于 HITL 状态');
-      return;
-    }
-
-    logger.info('用户同意执行');
+    if (!this.hitlActive) return;
 
     // 恢复输出
     this.hitlActive = false;
@@ -238,12 +244,7 @@ class OpenHermit {
    * 处理审批拒绝
    */
   handleReject() {
-    if (!this.hitlActive) {
-      logger.warn('未处于 HITL 状态');
-      return;
-    }
-
-    logger.info('用户拒绝执行');
+    if (!this.hitlActive) return;
 
     // 恢复输出
     this.hitlActive = false;

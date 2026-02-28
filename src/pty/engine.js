@@ -1,5 +1,6 @@
 import pty from 'node-pty';
 import path from 'path';
+import fs from 'fs';
 import { buildEnv, getDefaultShell } from './envBuild.js';
 import { getAllowedRootDir } from '../config/index.js';
 import logger from '../utils/logger.js';
@@ -97,13 +98,12 @@ class PTYEngine {
     const rootDir = getAllowedRootDir();
     const resolvedPath = path.resolve(this.workingDir, dir);
 
-    if (!resolvedPath.startsWith(rootDir)) {
+    if (resolvedPath !== rootDir && !resolvedPath.startsWith(rootDir + '/')) {
       logger.warn({ dir, rootDir }, '拒绝切换到白名单外的目录');
       return false;
     }
 
     // 检查目录是否存在
-    const fs = require('fs');
     if (!fs.existsSync(resolvedPath)) {
       logger.warn({ dir }, '目录不存在');
       return false;

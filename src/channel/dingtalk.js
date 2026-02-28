@@ -1,4 +1,4 @@
-import { Readable } from 'stream';
+import fs from 'fs';
 import { EventEmitter } from 'events';
 import { getDingTalkAppKey, getDingTalkAppSecret, getAllowedRootDir, getDingTalkUserId } from '../config/index.js';
 import logger from '../utils/logger.js';
@@ -29,6 +29,33 @@ class DingTalkChannel extends EventEmitter {
     this.mockMode = false;
     this.sessionWebhook = null;
     this.hasWelcomed = false; // 是否已发送欢迎消息
+    this.cachedToken = null;
+    this.tokenExpireAt = 0;
+  }
+
+  /**
+   * 获取 access_token（带缓存，有效期 110 分钟）
+   * @returns {Promise<string>}
+   */
+  async getAccessToken() {
+    const now = Date.now();
+    if (this.cachedToken && now < this.tokenExpireAt) {
+      return this.cachedToken;
+    }
+
+    const axios = (await import('axios')).default;
+    const AppKey = getDingTalkAppKey();
+    const AppSecret = getDingTalkAppSecret();
+
+    const tokenResult = await axios.get(
+      `https://oapi.dingtalk.com/gettoken?appkey=${AppKey}&appsecret=${AppSecret}`
+    );
+
+    this.cachedToken = tokenResult.data.access_token;
+    // 钉钉 token 有效期 2 小时，缓存 110 分钟留 10 分钟缓冲
+    this.tokenExpireAt = now + 110 * 60 * 1000;
+
+    return this.cachedToken;
   }
 
   /**
@@ -58,11 +85,6 @@ class DingTalkChannel extends EventEmitter {
 
       // 注册消息回调
       this.client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
-        logger.info({ res }, '收到消息');
-        // 打印消息详情，包含 senderStaffId，供用户配置 DINGTALK_USER_ID
-        console.log('=== DingTalk 消息详情 ===');
-        console.log(JSON.stringify(res, null, 2));
-        console.log('=========================');
         await this.handleMessage(res);
       });
 
@@ -97,10 +119,7 @@ class DingTalkChannel extends EventEmitter {
         // 发送启动消息给配置的用户
         const userId = getDingTalkUserId();
         if (userId) {
-          logger.info({ userId }, '发送启动消息给用户');
           this.sendStartupMessage(userId);
-        } else {
-          logger.info('未配置 DINGTALK_USER_ID，跳过启动消息');
         }
       }
 
@@ -119,10 +138,6 @@ class DingTalkChannel extends EventEmitter {
   async handleMessage(res) {
     try {
       const data = JSON.parse(res.data);
-      console.log('=== 钉钉消息完整数据 ===');
-      console.log(JSON.stringify(data, null, 2));
-      console.log('=========================');
-      logger.info({ data }, '解析消息');
 
       let text = '';
       if (data.text && data.text.content) {
@@ -132,10 +147,18 @@ class DingTalkChannel extends EventEmitter {
       }
 
       this.sessionWebhook = data.sessionWebhook || data.sessionWebhookUrl;
-      this.userId = data.senderId || data.senderStaffId;
+      this.senderId = data.senderId;
+      this.senderStaffId = data.senderStaffId;
+      this.senderNick = data.senderNick || data.nickName || data.senderName;
+      this.userId = this.senderStaffId || this.senderId;
 
       if (text) {
-        logger.info({ text, senderId: this.userId }, '收到文本消息');
+        logger.info({
+          text,
+          senderId: this.senderId,
+          senderStaffId: this.senderStaffId,
+          senderNick: this.senderNick
+        }, '收到文本消息');
 
         // 如果是第一条消息，发送欢迎消息
         if (!this.hasWelcomed) {
@@ -176,7 +199,7 @@ class DingTalkChannel extends EventEmitter {
   }
 
   /**
-   * 实际发送
+   * 实际发送（含分片逻辑）
    */
   doSend() {
     if (!this.buffer) return;
@@ -184,14 +207,71 @@ class DingTalkChannel extends EventEmitter {
     const text = this.buffer;
     this.buffer = '';
 
+    // 分片处理
+    const chunks = this.splitChunks(text);
+
     if (this.mockMode) {
-      console.log('\n--- [模拟钉钉消息] ---');
-      console.log(text);
-      console.log('-----------------------\n');
+      chunks.forEach(chunk => {
+        logger.debug({ length: chunk.length }, '[模拟钉钉消息]');
+        console.log(chunk);
+      });
       return;
     }
 
-    this.sendToDingTalk(text);
+    chunks.forEach(chunk => this.sendToDingTalk(chunk));
+  }
+
+  /**
+   * 将文本按钉钉消息长度限制分片
+   * 超过 2000 字节时按 1950 字节分片，片间保留 50 字节重叠
+   * @param {string} text - 待分片文本
+   * @returns {string[]} 分片数组
+   */
+  splitChunks(text) {
+    const MAX_CHUNK_SIZE = 2000;
+    const CHUNK_SIZE = 1950;
+    const OVERLAP = 50;
+
+    if (Buffer.byteLength(text, 'utf8') <= MAX_CHUNK_SIZE) {
+      return [text];
+    }
+
+    const chunks = [];
+    let charOffset = 0;
+
+    while (charOffset < text.length) {
+      // 计算当前片的字节边界
+      let byteCount = 0;
+      let charEnd = charOffset;
+
+      while (charEnd < text.length && byteCount < CHUNK_SIZE) {
+        const charBytes = Buffer.byteLength(text[charEnd], 'utf8');
+        if (byteCount + charBytes > CHUNK_SIZE) break;
+        byteCount += charBytes;
+        charEnd++;
+      }
+
+      chunks.push(text.slice(charOffset, charEnd));
+
+      if (charEnd >= text.length) break;
+
+      // 下一片从 charEnd - OVERLAP 字节处开始
+      // 计算重叠区域的字符数
+      let overlapBytes = 0;
+      let overlapChars = 0;
+      for (let i = charEnd - 1; i >= charOffset && overlapBytes < OVERLAP; i--) {
+        overlapBytes += Buffer.byteLength(text[i], 'utf8');
+        overlapChars++;
+      }
+      charOffset = charEnd - overlapChars;
+    }
+
+    // 添加序号
+    if (chunks.length > 1) {
+      return chunks.map((chunk, i) => `[${i + 1}/${chunks.length}] ${chunk}`);
+    }
+
+    return chunks;
   }
 
   /**
@@ -201,14 +281,7 @@ class DingTalkChannel extends EventEmitter {
   async sendToDingTalk(text) {
     try {
       const axios = (await import('axios')).default;
-      const AppKey = getDingTalkAppKey();
-      const AppSecret = getDingTalkAppSecret();
-
-      // 获取 access_token
-      const tokenResult = await axios.get(
-        `https://oapi.dingtalk.com/gettoken?appkey=${AppKey}&appsecret=${AppSecret}`
-      );
-      const accessToken = tokenResult.data.access_token;
+      const accessToken = await this.getAccessToken();
 
       // 优先使用 sessionWebhook 被动回复
       if (this.sessionWebhook) {
@@ -226,7 +299,6 @@ class DingTalkChannel extends EventEmitter {
             headers: { 'x-acs-dingtalk-access-token': accessToken }
           });
 
-          logger.info('消息发送成功（sessionWebhook）');
           return;
         } catch (webhookError) {
           logger.warn({ error: webhookError.message }, 'sessionWebhook 发送失败，尝试降级推送');
@@ -272,8 +344,6 @@ class DingTalkChannel extends EventEmitter {
           }
         }
       );
-
-      logger.info('消息发送成功（batchSend 主动推送）');
     } catch (error) {
       logger.error({ error: error.response?.data || error.message }, 'batchSend 发送失败');
     }
@@ -291,37 +361,15 @@ class DingTalkChannel extends EventEmitter {
 常用命令:
 /cd <目录>  - 切换工作目录
 /ls         - 查看可选目录
-/claude     - 启动 Claude Code
+/restart    - 重启 Claude Code
 
 直接发送你的需求即可，我会立即响应！`;
 
-    // 使用钉钉发送消息 API
     try {
-      const axios = (await import('axios')).default;
-      const AppKey = getDingTalkAppKey();
-      const AppSecret = getDingTalkAppSecret();
-
-      // 获取 access_token
-      const tokenResult = await axios.get(
-        `https://oapi.dingtalk.com/gettoken?appkey=${AppKey}&appsecret=${AppSecret}`
-      );
-      const accessToken = tokenResult.data.access_token;
-
-      // 发送消息给用户
-      await axios.post(
-        `https://oapi.dingtalk.com/robot/send?access_token=${accessToken}`,
-        {
-          msgtype: 'text',
-          text: {
-            content: startupMsg
-          },
-          userId: userId  // 使用 userId 发送
-        }
-      );
-
-      logger.info('启动消息已发送');
+      const accessToken = await this.getAccessToken();
+      await this.batchSend(startupMsg, accessToken);
     } catch (error) {
-      logger.error({ error: error.message }, '发送启动消息失败');
+      // 静默失败
     }
   }
 
@@ -330,11 +378,28 @@ class DingTalkChannel extends EventEmitter {
    */
   sendWelcome() {
     const rootDir = getAllowedRootDir();
+
+    // 列出根目录下的子目录
+    let dirList = `  - ${rootDir}`;
+    try {
+      const items = fs.readdirSync(rootDir);
+      const dirs = items.filter(item => {
+        try {
+          return fs.statSync(`${rootDir}/${item}`).isDirectory();
+        } catch { return false; }
+      });
+      if (dirs.length > 0) {
+        dirList = dirs.map(dir => `  - ${rootDir}/${dir}`).join('\n');
+      }
+    } catch (e) {
+      logger.warn({ error: e.message }, '读取根目录失败');
+    }
+
     const welcomeMsg = `🦀 欢迎使用 OpenHermit
 
 当前工作目录: ${rootDir}
 可选目录:
-  - ${rootDir}
+${dirList}
 
 命令:
   /cd <目录>  切换工作目录
@@ -351,7 +416,6 @@ class DingTalkChannel extends EventEmitter {
    */
   sendDirList(currentDir) {
     const rootDir = getAllowedRootDir();
-    const fs = require('fs');
 
     let msg = `当前工作目录: ${currentDir}\n白名单根目录: ${rootDir}\n\n`;
 
