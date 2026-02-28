@@ -31,23 +31,40 @@ class PTYEngine {
 
     logger.info({ shell: this.shell, cwd: this.workingDir }, '启动 PTY');
 
-    this.pty = pty.spawn(this.shell, [], {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 30,
-      cwd: this.workingDir,
-      env: env
-    });
+    // 检查 shell 是否存在
+    if (!fs.existsSync(this.shell)) {
+      logger.error({ shell: this.shell }, 'Shell 不存在');
+      throw new Error(`Shell 不存在: ${this.shell}`);
+    }
 
-    this.pty.onData((data) => {
-      this.dataCallbacks.forEach(cb => cb(data));
-    });
+    // 检查工作目录是否存在
+    if (!fs.existsSync(this.workingDir)) {
+      logger.error({ cwd: this.workingDir }, '工作目录不存在');
+      throw new Error(`工作目录不存在: ${this.workingDir}`);
+    }
 
-    this.pty.onExit(({ exitCode, signal }) => {
-      logger.info({ exitCode, signal }, 'PTY 进程退出');
-      this.pty = null;
-      this.exitCallbacks.forEach(cb => cb({ exitCode, signal }));
-    });
+    try {
+      this.pty = pty.spawn(this.shell, [], {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 30,
+        cwd: this.workingDir,
+        env: env
+      });
+
+      this.pty.onData((data) => {
+        this.dataCallbacks.forEach(cb => cb(data));
+      });
+
+      this.pty.onExit(({ exitCode, signal }) => {
+        logger.info({ exitCode, signal }, 'PTY 进程退出');
+        this.pty = null;
+        this.exitCallbacks.forEach(cb => cb({ exitCode, signal }));
+      });
+    } catch (error) {
+      logger.error({ error: error.message, stack: error.stack }, '启动失败');
+      throw error;
+    }
 
     return this;
   }
