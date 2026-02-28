@@ -127,10 +127,24 @@ export function checkEnvironment() {
     issues.push(`工作目录不存在: ${allowedRootDir}`);
   }
 
-  // 4. 检查 node-pty 是否可用（通过检查二进制文件）
-  const nodePtyPath = path.join(__dirname, '../../node_modules/node-pty/build/Release/pty.node');
-  if (!fs.existsSync(nodePtyPath)) {
-    issues.push('node-pty 二进制文件未找到，请运行 npm install');
+  // 4. 检查 node-pty 是否安装（检查模块路径）
+  // 注意：真正的可用性检测在 PTY 引擎初始化时进行
+  let nodePtyFound = false;
+  const possiblePaths = [
+    path.join(__dirname, '../../node_modules/node-pty'),
+    path.join(__dirname, '../../../node-pty'),
+  ];
+
+  // 检查可能的 node_modules 路径
+  for (const basePath of possiblePaths) {
+    if (fs.existsSync(path.join(basePath, 'package.json'))) {
+      nodePtyFound = true;
+      break;
+    }
+  }
+
+  if (!nodePtyFound) {
+    issues.push('node-pty 未安装，请运行 npm install');
   }
 
   // 5. 检查系统环境
