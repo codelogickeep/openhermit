@@ -13,6 +13,8 @@ class LLMClient {
     this.model = null;
     this.baseUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
     this.initialized = false;
+    this.maxRetries = 2;  // 最大重试次数
+    this.retryDelay = 1000;  // 重试延迟（毫秒）
   }
 
   /**
@@ -43,7 +45,15 @@ class LLMClient {
   }
 
   /**
-   * 调用百炼 API
+   * 延迟函数
+   * @param {number} ms - 延迟毫秒数
+   */
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * 调用百炼 API（带重试）
    * @param {string} prompt - 用户提示
    * @param {object} options - 可选参数
    * @returns {Promise<string>} 模型响应
@@ -56,43 +66,69 @@ class LLMClient {
     const {
       temperature = 0.3,
       maxTokens = 1000,
-      systemPrompt = '你是一个有帮助的助手。'
+      systemPrompt = '你是一个有帮助的助手。',
+      timeout = 30000  // 默认 30 秒超时
     } = options;
 
-    try {
-      logger.debug({ model: this.model, promptLength: prompt.length }, '调用 LLM API');
+    let lastError;
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          logger.info({ attempt, maxRetries: this.maxRetries }, 'LLM API 重试中...');
+          await this.sleep(this.retryDelay * attempt);
+        }
 
-      const response = await axios({
-        method: 'POST',
-        url: `${this.baseUrl}/chat/completions`,
-        data: {
-          model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: prompt }
-          ],
-          temperature,
-          max_tokens: maxTokens
-        },
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`
-        },
-        timeout: 60000,
-        proxy: false  // 禁用代理
-      });
+        logger.debug({ model: this.model, promptLength: prompt.length, attempt }, '调用 LLM API');
 
-      const content = response.data?.choices?.[0]?.message?.content;
-      if (!content) {
-        throw new Error('API 返回空响应');
+        const response = await axios({
+          method: 'POST',
+          url: `${this.baseUrl}/chat/completions`,
+          data: {
+            model: this.model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: prompt }
+            ],
+            temperature,
+            max_tokens: maxTokens
+          },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`
+          },
+          timeout,
+          proxy: false
+        });
+
+        const content = response.data?.choices?.[0]?.message?.content;
+        if (!content) {
+          throw new Error('API 返回空响应');
+        }
+
+        if (attempt > 0) {
+          logger.info({ attempt }, 'LLM API 重试成功');
+        }
+
+        return content;
+      } catch (error) {
+        lastError = error;
+        const errorMsg = error.response?.data?.error?.message || error.message;
+
+        // 超时或网络错误，尝试重试
+        if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT' || errorMsg.includes('timeout')) {
+          logger.warn({ attempt, error: errorMsg }, 'LLM API 超时，准备重试');
+          continue;
+        }
+
+        // 其他错误（如认证错误），不重试
+        logger.error({ error: errorMsg }, 'LLM API 调用失败');
+        throw new Error(`LLM API 调用失败: ${errorMsg}`);
       }
-
-      return content;
-    } catch (error) {
-      const errorMsg = error.response?.data?.error?.message || error.message;
-      logger.error({ error: errorMsg }, 'LLM API 调用失败');
-      throw new Error(`LLM API 调用失败: ${errorMsg}`);
     }
+
+    // 所有重试都失败
+    logger.error({ error: lastError?.message }, 'LLM API 重试耗尽');
+    throw new Error(`LLM API 调用失败: ${lastError?.message}`);
   }
 
   /**
@@ -215,6 +251,7 @@ class LLMClient {
       const response = await this.chat(prompt, {
         temperature: 0.2,
         maxTokens: 3000,
+        timeout: 45000,  // 格式化可能需要更长时间
         systemPrompt: '你是一个终端输出格式化助手，将输出转换为 Markdown 格式。保持信息完整，不要添加额外说明。'
       });
 
