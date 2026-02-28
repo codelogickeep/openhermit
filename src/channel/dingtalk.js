@@ -160,10 +160,9 @@ class DingTalkChannel extends EventEmitter {
           senderNick: this.senderNick
         }, '收到文本消息');
 
-        // 如果是第一条消息，发送欢迎消息
+        // 标记已欢迎（不在收到消息时发送欢迎消息，避免干扰）
         if (!this.hasWelcomed) {
           this.hasWelcomed = true;
-          this.sendWelcome();
         }
 
         this.emit('text', text, this.userId);

@@ -49,12 +49,15 @@ if (args[0] === 'update') {
 }
 
 // 以下是正常启动逻辑（使用动态 import）
-const { validateConfig, getAllowedRootDir, printEnvironmentInfo } = await import('./config/index.js');
+const { validateConfig, getAllowedRootDir, printEnvironmentInfo, getDashScopeApiKey } = await import('./config/index.js');
 const { default: PTYEngine } = await import('./pty/engine.js');
 const { default: DingTalkChannel } = await import('./channel/dingtalk.js');
 const { purify } = await import('./purifier/stripper.js');
 const { checkHitl, extractHitlPrompt } = await import('./purifier/hitl.js');
 const { default: logger } = await import('./utils/logger.js');
+const { getIntentParser, IntentTypes } = await import('./intent/index.js');
+const { getMarkdownFormatter } = await import('./formatter/index.js');
+const { getSelectionDetector, getSelectionHandler } = await import('./selector/index.js');
 
 // 全局异常处理
 process.on('unhandledRejection', (reason, promise) => {
@@ -85,6 +88,20 @@ class OpenHermit {
     this.channel = new DingTalkChannel();
     this.hitlActive = false;
     this.pausedBuffer = '';
+    this.intentParser = getIntentParser();
+    this.formatter = getMarkdownFormatter();
+    this.selectionDetector = getSelectionDetector();
+    this.selectionHandler = getSelectionHandler();
+    this.smartMode = !!getDashScopeApiKey(); // 智能模式：是否启用了 LLM
+    this.waitingForSelection = false; // 是否等待用户选择
+
+    // PTY 输出处理队列
+    this.ptyQueue = [];
+    this.isProcessingPty = false;
+
+    if (this.smartMode) {
+      logger.info('智能交互模式已启用');
+    }
   }
 
   /**
@@ -106,7 +123,9 @@ class OpenHermit {
     }
 
     // 设置 PTY 数据监听
-    this.pty.onData((data) => this.handlePtyData(data));
+    this.pty.onData((data) => {
+      this.handlePtyData(data);
+    });
 
     // 设置 PTY 退出监听
     this.pty.onExit(({ exitCode, signal }) => {
@@ -140,6 +159,45 @@ class OpenHermit {
    * @param {string} data - PTY 输出
    */
   handlePtyData(data) {
+    // 将数据加入队列
+    this.ptyQueue.push(data);
+
+    // 如果没有在处理，开始处理
+    if (!this.isProcessingPty) {
+      this.processPtyQueue();
+    }
+  }
+
+  /**
+   * 处理 PTY 输出队列
+   */
+  async processPtyQueue() {
+    if (this.ptyQueue.length === 0) {
+      this.isProcessingPty = false;
+      return;
+    }
+
+    this.isProcessingPty = true;
+
+    // 取出所有待处理的数据并合并
+    const allData = this.ptyQueue.join('');
+    this.ptyQueue = [];
+
+    try {
+      await this.processPtyData(allData);
+    } catch (error) {
+      logger.error({ error: error.message }, '处理 PTY 数据失败');
+    }
+
+    // 继续处理队列中可能新加入的数据
+    await this.processPtyQueue();
+  }
+
+  /**
+   * 实际处理 PTY 数据
+   * @param {string} data - PTY 输出
+   */
+  async processPtyData(data) {
     // 如果处于 HITL 暂停状态，将数据存入缓冲区
     if (this.hitlActive) {
       this.pausedBuffer += data;
@@ -151,7 +209,10 @@ class OpenHermit {
 
     if (!cleanData) return;
 
-    // 检查 HITL
+    // 打印日志
+    logger.debug({ data: cleanData.substring(0, 100) }, 'PTY 输出');
+
+    // 检查 HITL（原有的危险命令审批逻辑）
     if (checkHitl(cleanData)) {
       // 暂停输出
       this.hitlActive = true;
@@ -169,17 +230,40 @@ class OpenHermit {
       return;
     }
 
-    // 正常发送
-    this.channel.send(cleanData);
+    // 智能模式：检测选择提示（只检测，不格式化）
+    if (this.smartMode && !this.waitingForSelection) {
+      const selection = await this.selectionDetector.detect(cleanData);
+      if (selection) {
+        // 更新会话状态
+        const session = this.intentParser.getSession();
+        session.setSelection(selection.options, selection.context);
+        this.waitingForSelection = true;
+
+        // 格式化并发送选择提示
+        const formattedPrompt = this.selectionDetector.formatSelectionPrompt(selection);
+        this.channel.send(cleanData + formattedPrompt);
+        return;
+      }
+    }
+
+    // 格式化输出为 Markdown
+    const formattedData = this.formatter.basicFormat(cleanData);
+    if (formattedData) {
+      this.channel.send(formattedData);
+    }
   }
+
 
   /**
    * 处理钉钉收到的文本
    * @param {string} text - 文本内容
    * @param {string} senderId - 发送者 ID
    */
-  handleChannelText(text, senderId) {
+  async handleChannelText(text, senderId) {
     const trimmed = text.trim();
+
+    // 打印接收日志
+    logger.info({ text: trimmed, senderId }, '收到钉钉消息');
 
     // HITL 激活状态下，优先处理 y/n 回复
     if (this.hitlActive) {
@@ -196,6 +280,13 @@ class OpenHermit {
       return;
     }
 
+    // 智能模式：使用意图解析器
+    if (this.smartMode) {
+      await this.handleWithIntentParsing(trimmed);
+      return;
+    }
+
+    // 传统模式：简单命令匹配
     // 内置命令处理
     if (trimmed.startsWith('/')) {
       this.handleCommand(trimmed);
@@ -204,6 +295,107 @@ class OpenHermit {
 
     // 写入 PTY
     this.pty.write(text + '\r');
+  }
+
+  /**
+   * 使用意图解析处理用户消息
+   * @param {string} userMessage - 用户消息
+   */
+  async handleWithIntentParsing(userMessage) {
+    try {
+      const intent = await this.intentParser.parse(userMessage);
+      logger.info({ intent }, '意图解析结果');
+
+      switch (intent.type) {
+        case IntentTypes.BUILT_IN:
+          // 内置命令
+          this.handleCommand(`${intent.command}${intent.params.path ? ' ' + intent.params.path : ''}`);
+          break;
+
+        case IntentTypes.SHELL_COMMAND:
+          // 直接执行 shell 命令
+          logger.info({ command: intent.command }, '执行 shell 命令');
+          this.channel.send(`🔧 执行命令: ${intent.command}`);
+          this.pty.write(intent.command + '\r');
+          break;
+
+        case IntentTypes.CLAUDE_COMMAND:
+          // Claude Code 命令
+          this.executeClaudeCommand(intent.command, intent.params);
+          break;
+
+        case IntentTypes.CONVERSATION:
+          // 对话交互
+          this.handleConversation(intent);
+          break;
+
+        default:
+          // 默认：写入 PTY
+          this.pty.write(userMessage + '\r');
+      }
+    } catch (error) {
+      logger.error({ error: error.message }, '意图解析失败');
+      // 降级：直接写入 PTY
+      this.pty.write(userMessage + '\r');
+    }
+  }
+
+  /**
+   * 执行 Claude 命令
+   * @param {string} command - 命令内容
+   * @param {object} params - 参数
+   */
+  executeClaudeCommand(command, params = {}) {
+    const session = this.intentParser.getSession();
+
+    // 如果明确指定了 claude 命令或当前不在 claude 活动状态
+    if (params.explicit || session.mode === 'idle') {
+      // 启动 Claude Code 并传入命令（使用单引号防止 shell 注入）
+      const escaped = command.replace(/'/g, "'\\''");
+      const claudeCmd = `claude '${escaped}'`;
+      this.channel.send(`🚀 启动 Claude Code: ${command}`);
+      this.pty.write(claudeCmd + '\r');
+      session.setMode('claude_active');
+    } else {
+      // 已在 Claude 会话中，直接发送消息
+      this.pty.write(command + '\r');
+    }
+  }
+
+  /**
+   * 处理对话交互
+   * @param {object} intent - 意图对象
+   */
+  async handleConversation(intent) {
+    const session = this.intentParser.getSession();
+
+    if (intent.command === 'confirm') {
+      // y/n 确认
+      this.pty.write(intent.params.value + '\r');
+      return;
+    }
+
+    if (intent.command === 'select') {
+      // 使用选择处理器
+      const lastSelection = this.selectionDetector.getLastSelection();
+      if (lastSelection) {
+        const result = await this.selectionHandler.handle(lastSelection, String(intent.params.choice));
+        // arrow 方法已自带 \r，其他方法需追加
+        const input = result.method === 'arrow' ? result.input : result.input + '\r';
+        this.pty.write(input);
+        this.waitingForSelection = false;
+        session.clearSelection();
+        this.selectionDetector.clearLastSelection();
+      } else {
+        // 没有选择上下文，直接发送
+        const choice = intent.params.choice;
+        this.pty.write((typeof choice === 'string' ? choice : String(choice)) + '\r');
+      }
+      return;
+    }
+
+    // 其他对话：直接发送
+    this.pty.write(intent.command + '\r');
   }
 
   /**

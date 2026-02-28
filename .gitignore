@@ -11,3 +11,6 @@ coverage/
 
 # Claude settings
 .claude/settings.local.json
+
+# Local docs (not tracked)
+docs/

@@ -99,6 +99,22 @@ export function getDingTalkUserId() {
 }
 
 /**
+ * 获取阿里云百炼 API Key（可选）
+ * 用于 LLM 智能功能
+ */
+export function getDashScopeApiKey() {
+  return get('DASHSCOPE_API_KEY');
+}
+
+/**
+ * 获取百炼模型名称（可选）
+ * 默认使用 qwen3.5-flash
+ */
+export function getDashScopeModel() {
+  return get('DASHSCOPE_MODEL', 'qwen3.5-flash');
+}
+
+/**
  * 检查环境依赖
  * @returns {object} 检查结果
  */
@@ -249,6 +265,8 @@ export default {
   getAnthropicApiKey,
   getAnthropicBaseUrl,
   getDingTalkUserId,
+  getDashScopeApiKey,
+  getDashScopeModel,
   checkEnvironment,
   validateConfig,
   printEnvironmentInfo
