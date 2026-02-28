@@ -735,9 +735,40 @@ class OpenHermit {
       case '/status':
         this.handleStatus();
         break;
+      case '/claude':
+        this.handleClaude(args);
+        break;
       default:
-        this.channel.send(`未知命令: ${cmd}\n可用命令: /cd, /ls, /restart, /status`);
+        this.channel.send(`未知命令: ${cmd}\n可用命令: /cd, /ls, /restart, /status, /claude`);
     }
+  }
+
+  /**
+   * 处理 /claude 命令 - 直接启动 Claude（不经过 LLM）
+   * @param {string} args - 可选的任务描述
+   */
+  handleClaude(args) {
+    const session = this.intentParser.getSession();
+
+    if (session.mode === 'claude_active') {
+      // 已在 Claude 会话中，提示用户
+      this.channel.send('⚠️ Claude 已在运行中，直接发送消息即可');
+      return;
+    }
+
+    // 直接启动 Claude
+    if (args) {
+      // 带任务描述
+      const escaped = args.replace(/'/g, "'\\''");
+      this.pty.write(`claude '${escaped}'\r`);
+      this.channel.send(`🚀 启动 Claude Code: ${args}`);
+    } else {
+      // 纯启动
+      this.pty.write('claude\r');
+      this.channel.send('🚀 启动 Claude Code');
+    }
+
+    session.setMode('claude_active');
   }
 
   /**
