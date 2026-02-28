@@ -464,6 +464,26 @@ class OpenHermit {
    * @param {string} userMessage - 用户消息
    */
   async handleActiveMessage(userMessage) {
+    // 先刷新之前的缓冲区内容，让用户看到之前的输出
+    if (this.outputBuffer.pending) {
+      logger.info('用户发送消息，刷新输出缓冲区');
+      this.channel.flushBuffer();
+    }
+
+    // 临时关闭静默模式 30 秒，让用户能看到 Claude 的响应
+    this.channel.setSilentMode(false);
+
+    // 清除之前的定时器
+    if (this._silentTimer) {
+      clearTimeout(this._silentTimer);
+    }
+
+    // 30 秒后恢复静默模式
+    this._silentTimer = setTimeout(() => {
+      this.channel.setSilentMode(true);
+      logger.info('静默模式已恢复');
+    }, 30000);
+
     // 检测是否为交互选择（数字、y/n 等）
     const isInteraction = /^[1-9]\d*$|^y(es)?$|^n(o)?$/i.test(userMessage);
 
