@@ -179,15 +179,8 @@ openhermit/
 │   ├── formatter/        # 输出格式化
 │   ├── selector/         # 选择检测
 │   └── utils/            # 工具
-├── tests/                # 测试（117 用例）
-└── docs/                 # 文档
+└── tests/                # 测试（117 用例）
 ```
-
-## 📖 详细文档
-
-* [系统架构设计](docs/ARCHITECTURE.md)
-* [智能交互设计](docs/plans/smart-interaction/DESIGN.md)
-* [产品需求文档](docs/prd.md)
 
 ## 📄 许可证
 
