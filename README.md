@@ -35,6 +35,7 @@
 * Node.js v18+
 * macOS 或 Linux
 * 钉钉企业内部应用（AppKey 和 AppSecret）
+  * 前往 [钉钉开放平台](https://open-dev.dingtalk.com/) 创建企业内部应用获取
 
 ### 方式一：通过 npm 安装（推荐）
 
