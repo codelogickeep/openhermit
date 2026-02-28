@@ -1,4 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+
+// Mock 环境变量，避免依赖真实 .env 文件
+beforeAll(() => {
+  process.env.DINGTALK_APP_KEY = process.env.DINGTALK_APP_KEY || 'mock_app_key';
+  process.env.DINGTALK_APP_SECRET = process.env.DINGTALK_APP_SECRET || 'mock_app_secret';
+  process.env.ALLOWED_ROOT_DIR = process.env.ALLOWED_ROOT_DIR || '/tmp/openhermit-test';
+});
 
 describe('集成测试：模拟钉钉消息流程', () => {
   describe('1. 配置模块测试', () => {
