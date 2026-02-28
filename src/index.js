@@ -1,11 +1,57 @@
 #!/usr/bin/env node
 
-import { validateConfig, getAllowedRootDir, printEnvironmentInfo } from './config/index.js';
-import PTYEngine from './pty/engine.js';
-import DingTalkChannel from './channel/dingtalk.js';
-import { purify } from './purifier/stripper.js';
-import { checkHitl, extractHitlPrompt } from './purifier/hitl.js';
-import logger from './utils/logger.js';
+import { createRequire } from 'module';
+import { execSync } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json');
+
+// 解析命令行参数（在导入其他模块之前）
+const args = process.argv.slice(2);
+
+// 显示版本号
+if (args.includes('-v') || args.includes('--version')) {
+  console.log(`openhermit v${packageJson.version}`);
+  process.exit(0);
+}
+
+// 显示帮助
+if (args.includes('-h') || args.includes('--help')) {
+  console.log(`
+OpenHermit (开源寄居蟹) v${packageJson.version}
+
+用法:
+  openhermit           启动服务
+  openhermit -v        显示版本号
+  openhermit update    更新到最新版本
+  openhermit -h        显示帮助信息
+`);
+  process.exit(0);
+}
+
+// 更新包
+if (args[0] === 'update') {
+  console.log('正在更新 @codelogickeep/open-hermit...');
+  try {
+    execSync('npm update -g @codelogickeep/open-hermit', { stdio: 'inherit' });
+    console.log('更新完成！');
+  } catch (error) {
+    console.error('更新失败，请手动执行: npm update -g @codelogickeep/open-hermit');
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+// 以下是正常启动逻辑（使用动态 import）
+const { validateConfig, getAllowedRootDir, printEnvironmentInfo } = await import('./config/index.js');
+const { default: PTYEngine } = await import('./pty/engine.js');
+const { default: DingTalkChannel } = await import('./channel/dingtalk.js');
+const { purify } = await import('./purifier/stripper.js');
+const { checkHitl, extractHitlPrompt } = await import('./purifier/hitl.js');
+const { default: logger } = await import('./utils/logger.js');
 
 // 全局异常处理
 process.on('unhandledRejection', (reason, promise) => {
