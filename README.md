@@ -3,9 +3,10 @@
 > A Lightweight Remote PTY Bridge for Claude Code & Local AI Agents.
 > 让你的本地 AI 编程助手"长出"移动端的触角。
 
+[![npm version](https://img.shields.io/npm/v/@codelogickeep/open-hermit.svg)](https://www.npmjs.com/package/@codelogickeep/open-hermit)
+[![npm downloads](https://img.shields.io/npm/dm/@codelogickeep/open-hermit.svg)](https://www.npmjs.com/package/@codelogickeep/open-hermit)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg)
-![Status: Alpha](https://img.shields.io/badge/Status-Phase%201%20(DingTalk)-orange.svg)
 
 ## 💡 什么是 OpenHermit？
 
@@ -35,26 +36,40 @@
 * macOS 或 Linux
 * 钉钉企业内部应用（AppKey 和 AppSecret）
 
-### 1. 克隆项目
+### 方式一：通过 npm 安装（推荐）
 
 ```bash
-git clone https://github.com/codelogickeep/openhermit.git
-cd openhermit
+# 全局安装
+npm install -g @codelogickeep/open-hermit
+
+# 创建配置目录
+mkdir -p ~/.openhermit
+cd ~/.openhermit
+
+# 复制配置模板
+curl -o .env https://raw.githubusercontent.com/codelogickeep/openhermit/main/.env.example
+
+# 编辑配置
+vim .env
+
+# 启动
+openhermit
 ```
 
-### 2. 安装依赖
+### 方式二：从源码安装
 
 ```bash
+# 克隆项目
+git clone https://github.com/codelogickeep/openhermit.git
+cd openhermit
+
+# 安装依赖
 npm install
 ```
 
-### 3. 配置环境变量
+### 配置环境变量
 
-```bash
-cp .env.example .env
-```
-
-编辑 `.env` 文件：
+创建 `.env` 文件（npm 全局安装用户建议放在 `~/.openhermit/` 目录）：
 
 ```bash
 # 钉钉配置（必填）
@@ -74,11 +89,11 @@ ALLOWED_ROOT_DIR=/Users/xxx/projects
 # ANTHROPIC_BASE_URL=https://your-proxy.com/v1
 ```
 
-### 4. 获取 senderStaffId（可选）
+### 获取 senderStaffId（可选）
 
 如果需要在服务启动时主动推送消息给你，需要配置 `DINGTALK_USER_ID`：
 
-1. 首次启动应用：`npm start`
+1. 首次启动应用
 2. 在钉钉发送任意消息给机器人
 3. 查看控制台输出，找到 `senderStaffId` 字段：
    ```
@@ -90,10 +105,16 @@ ALLOWED_ROOT_DIR=/Users/xxx/projects
    =========================
    ```
 4. 将获取到的 ID 填入 `.env` 文件的 `DINGTALK_USER_ID` 中
-5. 重启应用：`npm start`
+5. 重启应用
 
-### 6. 启动应用
+### 启动应用
 
+**npm 全局安装：**
+```bash
+openhermit
+```
+
+**源码安装：**
 ```bash
 npm start
 ```
@@ -116,7 +137,7 @@ CPU: x 核
 [INFO] OpenHermit 启动完成
 ```
 
-### 7. 在钉钉中使用
+### 在钉钉中使用
 
 首次连接会收到欢迎消息：
 
