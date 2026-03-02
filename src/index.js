@@ -327,6 +327,8 @@ class OpenHermit {
         this.lastSentOptionsKey = selectionKey;
         this.sendSelectionToDingTalk(this.terminalBuffer, standardSelection);
         this.printSelectionToLocalTerminal(standardSelection);
+      } else {
+        logger.debug('⏭️ 标准交互已发送过，跳过');
       }
     } else {
       // 先检测任务是否完成
@@ -340,8 +342,11 @@ class OpenHermit {
           const promptKey = this.terminalBuffer.slice(-200); // 用最后 200 字符作为 key
           if (this.lastSentOptionsKey !== promptKey) {
             this.lastSentOptionsKey = promptKey;
+            logger.info({ bufferLength: this.terminalBuffer.length }, '🚀 触发非标准交互分析');
             // 异步分析，不阻塞
             this.handleNonStandardInteraction(this.terminalBuffer);
+          } else {
+            logger.debug('⏭️ 非标准交互已发送过，跳过');
           }
         }
       }
@@ -380,7 +385,20 @@ class OpenHermit {
       return false;
     }
 
-    return inputPatterns.some(p => p.test(data)) || (hasPrompt && data.trim().length > 50);
+    const result = inputPatterns.some(p => p.test(data)) || (hasPrompt && data.trim().length > 50);
+
+    // 调试日志：记录检测结果
+    if (data.trim().length > 20) {
+      logger.debug({
+        dataPreview: data.slice(-100),
+        hasPrompt,
+        hasOnlyPrompt,
+        result,
+        bufferLength: this.terminalBuffer.length
+      }, '🔍 detectInputPrompt 检测');
+    }
+
+    return result;
   }
 
   /**
@@ -393,6 +411,13 @@ class OpenHermit {
 
       // 只使用从上次交互结束后的新内容进行分析
       const newOutput = terminalOutput.slice(this.lastInteractionBufferEnd);
+      logger.debug({
+        totalLength: terminalOutput.length,
+        startPos: this.lastInteractionBufferEnd,
+        newLength: newOutput.length,
+        newPreview: newOutput.slice(-100)
+      }, '📊 缓冲区分析');
+
       if (!newOutput || newOutput.trim().length < 10) {
         logger.debug('新输出内容太少，跳过分析');
         return;
@@ -659,6 +684,9 @@ class OpenHermit {
       }
       this.lastInteractionBufferEnd = 0;
 
+      // 重置 lastSentOptionsKey，确保新的交互能被检测到
+      this.lastSentOptionsKey = null;
+
       // 发送解析结果到 PTY
       if (result.understood && result.input) {
         logger.info({ input: result.input }, '✅ LLM 解析用户回复成功');
@@ -682,6 +710,7 @@ class OpenHermit {
         this.terminalBuffer = this.terminalBuffer.slice(this.lastInteractionBufferEnd);
       }
       this.lastInteractionBufferEnd = 0;
+      this.lastSentOptionsKey = null;
       this.writeCommand(userReply);
     }
   }
