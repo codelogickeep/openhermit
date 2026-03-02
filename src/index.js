@@ -709,6 +709,9 @@ class OpenHermit {
     // 其他所有内容：转发给 Claude 终端
     const session = this.intentParser.getSession();
     if (session.mode === 'claude_active') {
+      // 检测 /exit 命令：退出 Claude Code 后需要清理缓冲区
+      const isExitCommand = trimmed === '/exit' || trimmed.toLowerCase() === 'exit';
+
       // 检查是否有交互上下文（非标准交互）
       if (this.interactionContext.hasContext() && this.smartMode) {
         // 有上下文，用 LLM 解析用户回复
@@ -716,6 +719,11 @@ class OpenHermit {
       } else {
         // 无上下文，直接写入
         this.writeCommand(trimmed);
+      }
+
+      // 如果是退出命令，清理缓冲区和重置状态
+      if (isExitCommand) {
+        this.clearClaudeSession();
       }
     } else {
       // Claude 未启动：提示错误
@@ -1386,6 +1394,44 @@ class OpenHermit {
     this.interactionContext.clearContext();
     this.lastInteractionBufferEnd = 0;
     this.lastAnalyzedPosition = 0;
+  }
+
+  /**
+   * 清理 Claude 会话状态和缓冲区
+   * 在 /exit 或 Claude 退出后调用
+   */
+  clearClaudeSession() {
+    logger.info('🧹 清理 Claude 会话状态和缓冲区');
+
+    // 重置会话模式
+    const session = this.intentParser.getSession();
+    session.setMode('idle');
+
+    // 清理终端缓冲区
+    this.terminalBuffer = '';
+    this.outputBuffer.pending = '';
+
+    // 清理钉钉通道缓冲区
+    this.channel.buffer = '';
+
+    // 重置交互状态
+    this.waitingForUserReply = false;
+    this.interactionContext.clearContext();
+    this.lastInteractionBufferEnd = 0;
+    this.lastAnalyzedPosition = 0;
+
+    // 重置任务状态
+    this.taskStatus = {
+      isRunning: false,
+      startTime: null,
+      phase: 'idle'
+    };
+
+    // 重置 HITL 状态
+    this.hitlActive = false;
+    this.pausedBuffer = '';
+
+    logger.info('✅ Claude 会话已清理');
   }
 
   /**
