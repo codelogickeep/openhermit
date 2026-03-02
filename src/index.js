@@ -4,6 +4,7 @@ import { createRequire } from 'module';
 import { execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -57,7 +58,6 @@ const { checkHitl, extractHitlPrompt } = await import('./purifier/hitl.js');
 const { default: logger } = await import('./utils/logger.js');
 const { getIntentParser, IntentTypes } = await import('./intent/index.js');
 const { getMarkdownFormatter } = await import('./formatter/index.js');
-const { getSelectionDetector, getSelectionHandler } = await import('./selector/index.js');
 const { getLLMClient, getInteractionAnalyzer, getInteractionContext } = await import('./llm/index.js');
 
 // 全局异常处理
@@ -91,8 +91,6 @@ class OpenHermit {
     this.pausedBuffer = '';
     this.intentParser = getIntentParser();
     this.formatter = getMarkdownFormatter();
-    this.selectionDetector = getSelectionDetector();
-    this.selectionHandler = getSelectionHandler();
     this.llmClient = getLLMClient();
     this.interactionAnalyzer = getInteractionAnalyzer();
     this.interactionContext = getInteractionContext();
@@ -102,6 +100,11 @@ class OpenHermit {
     this.terminalBuffer = '';
     this.maxBufferSize = 5000; // 最大缓冲区大小
     this.lastInteractionBufferEnd = 0; // 上次交互结束时的缓冲区位置
+
+    // 终端输出日志文件
+    this.terminalLogFile = null;
+    this.terminalLogStream = null;
+    this.maxLogFileSize = 5 * 1024 * 1024; // 5MB
 
     // PTY 输出处理队列
     this.ptyQueue = [];
@@ -124,8 +127,87 @@ class OpenHermit {
     // 选项检测相关
     this.lastSentOptionsKey = null;  // 上次发送的选项的 JSON key（避免重复发送）
 
+    // LLM 分析状态追踪
+    this.lastAnalyzedPosition = 0;  // 上次分析时的缓冲区位置
+    this.waitingForUserReply = false;  // 是否正在等待用户回复
+
     if (this.smartMode) {
       logger.info('智能交互模式已启用');
+    }
+  }
+
+  /**
+   * 生成带时间戳的日志文件名
+   * @returns {string} 日志文件路径
+   */
+  generateLogFileName() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hour = String(now.getHours()).padStart(2, '0');
+    const minute = String(now.getMinutes()).padStart(2, '0');
+    const second = String(now.getSeconds()).padStart(2, '0');
+    const timestamp = `${year}${month}${day}-${hour}${minute}${second}`;
+    return path.join(process.cwd(), `claude-terminal-${timestamp}.log`);
+  }
+
+  /**
+   * 初始化终端输出日志文件
+   */
+  initTerminalLog() {
+    try {
+      this.terminalLogFile = this.generateLogFileName();
+      this.terminalLogStream = fs.createWriteStream(this.terminalLogFile, { flags: 'a' });
+      this.terminalLogStream.write(`\n${'='.repeat(60)}\n`);
+      this.terminalLogStream.write(`# OpenHermit 启动 - ${new Date().toISOString()}\n`);
+      this.terminalLogStream.write(`${'='.repeat(60)}\n\n`);
+      logger.info({ file: this.terminalLogFile }, '📝 终端输出日志文件已创建');
+    } catch (error) {
+      logger.error({ error: error.message }, '创建终端日志文件失败');
+    }
+  }
+
+  /**
+   * 写入终端输出到日志文件
+   * @param {string} data - 终端输出数据
+   */
+  writeToTerminalLog(data) {
+    if (!this.terminalLogStream || !data || !data.trim()) return;
+
+    try {
+      // 检查文件大小，超过限制则轮转
+      const stats = fs.statSync(this.terminalLogFile);
+      if (stats.size >= this.maxLogFileSize) {
+        this.rotateLogFile();
+      }
+
+      const timestamp = new Date().toISOString();
+      this.terminalLogStream.write(`[${timestamp}]\n${data}\n`);
+    } catch (error) {
+      // 忽略写入错误
+    }
+  }
+
+  /**
+   * 轮转日志文件
+   */
+  rotateLogFile() {
+    this.closeTerminalLog();
+    this.initTerminalLog();
+    logger.info('📝 终端日志文件已轮转');
+  }
+
+  /**
+   * 关闭终端日志文件
+   */
+  closeTerminalLog() {
+    if (this.terminalLogStream) {
+      this.terminalLogStream.write(`\n${'='.repeat(60)}\n`);
+      this.terminalLogStream.write(`# OpenHermit 停止 - ${new Date().toISOString()}\n`);
+      this.terminalLogStream.write(`${'='.repeat(60)}\n`);
+      this.terminalLogStream.end();
+      this.terminalLogStream = null;
     }
   }
 
@@ -192,9 +274,14 @@ class OpenHermit {
       process.exit(1);
     }
 
+    // 初始化终端日志文件
+    this.initTerminalLog();
+
     // 初始化并测试 LLM 连接（如果配置了 DashScope API Key）
     if (this.smartMode) {
       await this.initLLM();
+    } else {
+      logger.warn('未配置 DashScope API Key，LLM 分析功能不可用');
     }
 
     // 设置 PTY 数据监听
@@ -285,6 +372,9 @@ class OpenHermit {
 
     if (!cleanData || !cleanData.trim()) return;
 
+    // 写入终端输出日志文件
+    this.writeToTerminalLog(cleanData);
+
     // 本地终端输出：显示状态指示器
     this.updateStatusIndicator(cleanData);
 
@@ -316,38 +406,22 @@ class OpenHermit {
       return;
     }
 
-    // 检测交互提示
-    // 1. 先检测是否为标准交互（y/n 确认、Allow 确认、编号选项）
-    const standardSelection = this.selectionDetector.detect(this.terminalBuffer);
-    if (standardSelection && standardSelection.isStandard) {
-      // 标准交互：直接处理
-      const selectionKey = JSON.stringify(standardSelection);
-      if (this.lastSentOptionsKey !== selectionKey) {
-        logger.info({ type: standardSelection.type }, '📋 检测到标准交互');
-        this.lastSentOptionsKey = selectionKey;
-        this.sendSelectionToDingTalk(this.terminalBuffer, standardSelection);
-        this.printSelectionToLocalTerminal(standardSelection);
-      } else {
-        logger.debug('⏭️ 标准交互已发送过，跳过');
-      }
-    } else {
-      // 先检测任务是否完成
-      const isTaskCompleted = this.checkTaskCompletion(cleanData);
+    // 检测任务是否完成
+    const isTaskCompleted = this.checkTaskCompletion(cleanData);
 
-      // 2. 非标准交互：使用 LLM 分析（任务完成后不触发）
-      if (!isTaskCompleted) {
-        // 检测是否有等待用户输入的特征
-        const hasInputPrompt = this.detectInputPrompt(cleanData);
-        if (hasInputPrompt && this.smartMode) {
-          const promptKey = this.terminalBuffer.slice(-200); // 用最后 200 字符作为 key
-          if (this.lastSentOptionsKey !== promptKey) {
-            this.lastSentOptionsKey = promptKey;
-            logger.info({ bufferLength: this.terminalBuffer.length }, '🚀 触发非标准交互分析');
-            // 异步分析，不阻塞
-            this.handleNonStandardInteraction(this.terminalBuffer);
-          } else {
-            logger.debug('⏭️ 非标准交互已发送过，跳过');
-          }
+    // 使用 LLM 分析终端输出（任务完成后不触发，等待用户回复时不触发）
+    if (!isTaskCompleted && this.smartMode && !this.waitingForUserReply) {
+      // 检测是否有等待用户输入的简单特征（作为触发 LLM 分析的条件）
+      const hasInputHint = this.hasInputHint(cleanData);
+      if (hasInputHint) {
+        // 使用缓冲区位置作为去重 key
+        const currentPosition = this.terminalBuffer.length;
+        if (currentPosition > this.lastAnalyzedPosition + 100) {
+          // 至少有 100 字符的新内容才触发分析
+          this.lastAnalyzedPosition = currentPosition;
+          logger.info({ bufferLength: this.terminalBuffer.length }, '🚀 触发 LLM 交互分析');
+          // 异步分析，不阻塞
+          this.handleLLMInteractionAnalysis(this.terminalBuffer);
         }
       }
     }
@@ -361,70 +435,54 @@ class OpenHermit {
   }
 
   /**
-   * 检测是否有等待用户输入的特征
+   * 检测是否有等待用户输入的简单特征（作为触发 LLM 的条件）
    * @param {string} data - 净化后的数据
-   * @returns {boolean} 是否检测到输入提示
+   * @returns {boolean} 是否可能需要用户输入
    */
-  detectInputPrompt(data) {
-    // 检测常见的输入提示特征
-    const inputPatterns = [
-      /\?$/,
-      /请.*[输入描述]*/,
-      /what would you like/i,
-      /how can i help/i,
-      /continue\?/i,
-    ];
-
-    // 单独检测提示符，但需要确保不是单纯的终端提示符
-    // 只有当提示符前面有实际的交互内容时才算
-    const hasPrompt = /❯.*$/.test(data);
-    const hasOnlyPrompt = /^\s*❯\s*$/.test(data.trim());
-
-    // 如果只有提示符，不算作输入提示
-    if (hasOnlyPrompt) {
+  hasInputHint(data) {
+    // 排除正在处理中的状态（思考中、执行中等）
+    if (/thinking|actioning|processing|loading/i.test(data)) {
       return false;
     }
 
-    const result = inputPatterns.some(p => p.test(data)) || (hasPrompt && data.trim().length > 50);
+    // 检测明确的交互提示特征
+    const hints = [
+      /\?$/,           // 以问号结尾
+      /\(y\/n\)/i,     // y/n 确认
+      /\[\d+\/\d+\]/,  // 进度标记 [1/3]
+      /^\s*\d+[.)\]]\s+.+/m,  // 编号选项（需要有内容）
+    ];
 
-    // 调试日志：记录检测结果
-    if (data.trim().length > 20) {
-      logger.debug({
-        dataPreview: data.slice(-100),
-        hasPrompt,
-        hasOnlyPrompt,
-        result,
-        bufferLength: this.terminalBuffer.length
-      }, '🔍 detectInputPrompt 检测');
-    }
+    // 检测提示符，但要确保前面有实际内容
+    const hasPrompt = /❯/.test(data);
+    const hasContent = data.trim().length > 100;
 
-    return result;
+    return hints.some(h => h.test(data)) || (hasPrompt && hasContent);
   }
 
   /**
-   * 处理非标准交互（使用 LLM 分析）
+   * 处理 LLM 交互分析（所有交互都用 LLM 分析）
    * @param {string} terminalOutput - 终端输出
    */
-  async handleNonStandardInteraction(terminalOutput) {
+  async handleLLMInteractionAnalysis(terminalOutput) {
     try {
-      logger.info('🤖 使用 LLM 分析非标准交互');
+      logger.info('🤖 使用 LLM 分析终端输出');
 
       // 只使用从上次交互结束后的新内容进行分析
       const newOutput = terminalOutput.slice(this.lastInteractionBufferEnd);
-      logger.debug({
-        totalLength: terminalOutput.length,
-        startPos: this.lastInteractionBufferEnd,
-        newLength: newOutput.length,
-        newPreview: newOutput.slice(-100)
-      }, '📊 缓冲区分析');
-
-      if (!newOutput || newOutput.trim().length < 10) {
+      if (!newOutput || newOutput.trim().length < 20) {
         logger.debug('新输出内容太少，跳过分析');
         return;
       }
 
-      // 使用 LLM 分析（只分析新内容）
+      // 使用 LLM 分析
       const analysis = await this.interactionAnalyzer.analyze(newOutput);
+
+      // 检查是否需要用户交互
+      if (!analysis.needsInteraction) {
+        logger.debug('LLM 判断不需要用户交互');
+        return;
+      }
 
       // 记录当前交互结束时的缓冲区位置
       this.lastInteractionBufferEnd = terminalOutput.length;
@@ -436,6 +494,9 @@ class OpenHermit {
       // 生成消息
       const message = this.interactionAnalyzer.formatMessage(analysis);
 
+      // 设置等待用户回复状态
+      this.waitingForUserReply = true;
+
       // 发送到钉钉
       this.channel.send(message, { immediate: true, taskCompleted: false });
 
@@ -446,7 +507,7 @@ class OpenHermit {
 
       logger.info({ type: analysis.type, contextId }, '📤 发送 LLM 分析结果到钉钉');
     } catch (error) {
-      logger.error({ error: error.message }, 'LLM 分析非标准交互失败');
+      logger.error({ error: error.message }, 'LLM 交互分析失败');
     }
   }
 
@@ -472,41 +533,6 @@ class OpenHermit {
         return;
       }
     }
-  }
-
-  /**
-   * 在本地终端打印选择提示
-   * @param {object} selection - 选择信息（来自 SelectionDetector）
-   */
-  printSelectionToLocalTerminal(selection) {
-    // 清除状态行
-    process.stdout.write('\r\x1b[K');
-
-    // 打印选择提示
-    console.log('\n\x1b[33m━━━ 需要您的操作 ━━━\x1b[0m');
-
-    switch (selection.type) {
-      case 'confirm':
-        console.log(`  请回复 \x1b[32my\x1b[0m (同意) 或 \x1b[31mn\x1b[0m (拒绝)`);
-        break;
-
-      case 'text_input':
-        console.log(`  \x1b[36m等待您的输入...\x1b[0m`);
-        break;
-
-      case 'number':
-      case 'arrow':
-        for (const opt of selection.options) {
-          const marker = opt.isDefault ? ' \x1b[33m← 默认\x1b[0m' : '';
-          console.log(`  \x1b[36m${opt.index}.\x1b[0m ${opt.text}${marker}`);
-        }
-        break;
-
-      default:
-        console.log(`  等待中...`);
-    }
-
-    console.log('\x1b[33m━━━━━━━━━━━━━━━━━━━━\x1b[0m\n');
   }
 
   /**
@@ -558,49 +584,6 @@ class OpenHermit {
     }
 
     return isCompleted;
-  }
-
-  /**
-   * 发送选择提示到钉钉
-   * @param {string} rawData - 原始数据
-   * @param {object} selection - 选择信息（来自 SelectionDetector）
-   */
-  sendSelectionToDingTalk(rawData, selection) {
-    // 更新状态
-    this.taskStatus.phase = 'waiting_input';
-
-    // 格式化消息
-    let msg = '';
-
-    switch (selection.type) {
-      case 'confirm':
-        msg = '## 🤔 请确认\n\n';
-        msg += '请回复 **y** (同意) 或 **n** (拒绝)';
-        break;
-
-      case 'text_input':
-        msg = '## ✍️ 等待输入\n\n';
-        msg += 'Claude 正在等待您的输入。\n';
-        msg += '请直接回复您想执行的任务描述。';
-        break;
-
-      case 'number':
-      case 'arrow':
-        msg = '## 🤔 请选择\n\n';
-        msg += '请回复对应的**数字**选择：\n\n';
-        for (const opt of selection.options) {
-          const marker = opt.isDefault ? ' ← 默认' : '';
-          msg += `${opt.index}. ${opt.text}${marker}\n`;
-        }
-        break;
-
-      default:
-        msg = '## ⏳ 等待中\n\n';
-        msg += 'Claude 正在处理...';
-    }
-
-    // 发送到钉钉
-    this.channel.send(msg, { immediate: true, taskCompleted: false });
   }
 
 
@@ -667,6 +650,9 @@ class OpenHermit {
     try {
       logger.info('🤖 解析带上下文的用户回复');
 
+      // 重置等待状态
+      this.waitingForUserReply = false;
+
       // 用 LLM 解析
       const result = await this.interactionAnalyzer.parseUserReply(userReply);
 
@@ -683,9 +669,7 @@ class OpenHermit {
         this.terminalBuffer = '';
       }
       this.lastInteractionBufferEnd = 0;
-
-      // 重置 lastSentOptionsKey，确保新的交互能被检测到
-      this.lastSentOptionsKey = null;
+      this.lastAnalyzedPosition = 0;  // 重置分析位置
 
       // 发送解析结果到 PTY
       if (result.understood && result.input) {
@@ -704,13 +688,14 @@ class OpenHermit {
     } catch (error) {
       logger.error({ error: error.message }, '解析用户回复失败');
       // 降级：直接发送原始输入
+      this.waitingForUserReply = false;
       this.interactionContext.clearContext();
       // 清理缓冲区
       if (this.lastInteractionBufferEnd > 0) {
         this.terminalBuffer = this.terminalBuffer.slice(this.lastInteractionBufferEnd);
       }
       this.lastInteractionBufferEnd = 0;
-      this.lastSentOptionsKey = null;
+      this.lastAnalyzedPosition = 0;
       this.writeCommand(userReply);
     }
   }
@@ -1067,37 +1052,17 @@ class OpenHermit {
    * @param {object} intent - 意图对象
    */
   async handleConversation(intent) {
-    const session = this.intentParser.getSession();
-
+    // 所有交互都通过 LLM 处理，这里只做简单的命令转发
     if (intent.command === 'confirm') {
       // y/n 确认
       this.writeCommand(intent.params.value);
-      // 清除等待选择状态（如果有）
-      if (this.waitingForSelection) {
-        this.waitingForSelection = false;
-        session.clearSelection();
-        this.selectionDetector.clearLastSelection();
-        logger.debug('confirm 处理完成，清除等待选择状态');
-      }
       return;
     }
 
     if (intent.command === 'select') {
-      // 使用选择处理器
-      const lastSelection = this.selectionDetector.getLastSelection();
-      if (lastSelection) {
-        const result = await this.selectionHandler.handle(lastSelection, String(intent.params.choice));
-        // arrow 方法已自带 \r，其他方法需追加
-        const input = result.method === 'arrow' ? result.input : result.input + '\r';
-        this.pty.write(input);
-        this.waitingForSelection = false;
-        session.clearSelection();
-        this.selectionDetector.clearLastSelection();
-      } else {
-        // 没有选择上下文，直接发送
-        const choice = intent.params.choice;
-        this.pty.write((typeof choice === 'string' ? choice : String(choice)) + '\r');
-      }
+      // 选择：直接发送选择值
+      const choice = intent.params.choice;
+      this.pty.write((typeof choice === 'string' ? choice : String(choice)) + '\r');
       return;
     }
 
@@ -1307,6 +1272,7 @@ class OpenHermit {
    */
   stop() {
     logger.info('停止 OpenHermit...');
+    this.closeTerminalLog();
     this.pty.kill();
     this.channel.disconnect();
   }

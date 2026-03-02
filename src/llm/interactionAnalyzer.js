@@ -14,29 +14,34 @@ const AnalyzePrompts = {
   /**
    * 终端输出分析 Prompt
    */
-  analyzeOutput: `你是一个终端交互分析助手。分析以下终端输出，提取关键信息。
+  analyzeOutput: `你是一个终端交互分析助手。分析以下 Claude Code 终端输出，判断是否需要用户交互。
 
 【终端输出】
 """
 {{terminalOutput}}
 """
 
-返回 JSON 格式：
+请返回 JSON 格式：
 {
-  "type": "text_input | selection | confirmation",
+  "needsInteraction": true/false,
+  "type": "selection | text_input | confirmation | none",
   "context": {
-    "question": "提取主要问题，简洁明了（不超过100字）",
-    "examples": ["提取的示例列表"],
-    "additionalInfo": "其他关键上下文（可选）"
-  },
-  "suggestedInput": "建议的输入（可选）"
+    "question": "Claude 正在问用户什么问题？（简洁明了，不超过100字）",
+    "options": ["选项1", "选项2", ...],
+    "additionalInfo": "其他有用的上下文信息（可选）"
+  }
 }
 
-要求：
-1. question 要简洁，只保留核心问题
-2. examples 只提取真正的示例，没有则返回空数组
-3. additionalInfo 只保留对用户有用的信息
-4. 只返回 JSON，不要其他内容`,
+判断标准：
+1. needsInteraction: 如果 Claude 正在等待用户输入，设为 true
+2. type:
+   - selection: 有编号选项列表供用户选择
+   - text_input: 需要用户输入自由文本
+   - confirmation: y/n 确认
+   - none: Claude 正在思考或执行任务，不需要用户输入
+3. options: 仅当 type 为 selection 时，提取选项列表
+4. question: 提取 Claude 正在问的问题
+5. 只返回 JSON，不要其他内容`,
 
   /**
    * 用户回复解析 Prompt
@@ -80,7 +85,7 @@ class LLMInteractionAnalyzer {
   }
 
   /**
-   * 分析终端输出（非标准交互）
+   * 分析终端输出
    * @param {string} terminalOutput - 终端输出
    * @returns {Promise<object>} 分析结果
    */
@@ -89,6 +94,13 @@ class LLMInteractionAnalyzer {
     if (this.llmClient.isAvailable()) {
       try {
         const prompt = AnalyzePrompts.analyzeOutput.replace('{{terminalOutput}}', terminalOutput);
+
+        // 打印发送给 LLM 的内容
+        logger.info({
+          terminalOutputLength: terminalOutput.length,
+          terminalOutputPreview: terminalOutput.slice(-500)
+        }, '📤 发送给 LLM 分析的内容');
+
         const response = await this.llmClient.chat(prompt, {
           temperature: 0.2,
           maxTokens: 500,
@@ -96,10 +108,17 @@ class LLMInteractionAnalyzer {
           systemPrompt: '你是一个终端交互分析助手，只返回 JSON 格式结果。'
         });
 
+        // 打印 LLM 返回的原始响应
+        logger.info({ response }, '📥 LLM 返回的原始响应');
+
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const analysis = JSON.parse(jsonMatch[0]);
-          logger.debug({ analysis }, '🤖 LLM 分析终端输出成功');
+          // 确保 needsInteraction 有默认值
+          if (analysis.needsInteraction === undefined) {
+            analysis.needsInteraction = analysis.type !== 'none';
+          }
+          logger.info({ analysis }, '✅ LLM 分析结果');
           return analysis;
         }
       } catch (error) {
@@ -117,25 +136,48 @@ class LLMInteractionAnalyzer {
    * @returns {object} 分析结果
    */
   fallbackAnalyze(terminalOutput) {
+    // 检测是否有编号选项
+    const optionMatches = [...terminalOutput.matchAll(/^\s*(\d+)[.)\]]\s+(.+)$/gm)];
+    const options = optionMatches.slice(0, 10).map(m => m[2].trim());
+
+    // 检测 y/n 确认
+    const isConfirmation = /\(y\/n\)|\[y\/n\]/i.test(terminalOutput);
+
     // 提取最后一句问句
     const questions = terminalOutput.match(/([^。！？\n]*[？?])/g);
     const question = questions?.[questions.length - 1] || '请输入您的指令';
 
-    // 提取示例（以 "-" 开头的行，或带引号的示例）
-    const examples = [];
-    const exampleMatches = terminalOutput.matchAll(/^-\s*[""']?([^""'\n]+)[""']?$/gm);
-    for (const match of exampleMatches) {
-      const text = match[1].trim();
-      if (text.length > 2) {
-        examples.push(text);
-      }
+    if (isConfirmation) {
+      return {
+        needsInteraction: true,
+        type: 'confirmation',
+        context: {
+          question,
+          options: [],
+          additionalInfo: ''
+        }
+      };
     }
 
+    if (options.length >= 2) {
+      return {
+        needsInteraction: true,
+        type: 'selection',
+        context: {
+          question,
+          options,
+          additionalInfo: ''
+        }
+      };
+    }
+
+    // 默认：文本输入
     return {
+      needsInteraction: true,
       type: 'text_input',
       context: {
         question,
-        examples,
+        options: [],
         additionalInfo: ''
       }
     };
@@ -197,7 +239,7 @@ class LLMInteractionAnalyzer {
    */
   formatMessage(analysis) {
     const { type, context } = analysis;
-    const { question, examples, additionalInfo } = context || {};
+    const { question, options, additionalInfo } = context || {};
 
     let msg = '';
 
@@ -213,9 +255,9 @@ class LLMInteractionAnalyzer {
         if (question) {
           msg += `**${question}**\n\n`;
         }
-        if (examples && examples.length > 0) {
+        if (options && options.length > 0) {
           msg += '**选项：**\n';
-          examples.forEach((opt, idx) => {
+          options.forEach((opt, idx) => {
             msg += `${idx + 1}. ${opt}\n`;
           });
           msg += '\n请回复对应的数字。';
@@ -228,10 +270,10 @@ class LLMInteractionAnalyzer {
         if (question) {
           msg += `**Claude 的问题：**\n${question}\n\n`;
         }
-        if (examples && examples.length > 0) {
+        if (options && options.length > 0) {
           msg += '**示例：**\n';
-          examples.forEach((ex, idx) => {
-            msg += `${idx + 1}. ${ex}\n`;
+          options.forEach((opt, idx) => {
+            msg += `${idx + 1}. ${opt}\n`;
           });
           msg += '\n';
         }
