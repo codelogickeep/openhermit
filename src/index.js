@@ -101,6 +101,7 @@ class OpenHermit {
     // 终端输出缓冲区（用于 LLM 上下文分析）
     this.terminalBuffer = '';
     this.maxBufferSize = 5000; // 最大缓冲区大小
+    this.lastInteractionBufferEnd = 0; // 上次交互结束时的缓冲区位置
 
     // PTY 输出处理队列
     this.ptyQueue = [];
@@ -390,12 +391,22 @@ class OpenHermit {
     try {
       logger.info('🤖 使用 LLM 分析非标准交互');
 
-      // 使用 LLM 分析
-      const analysis = await this.interactionAnalyzer.analyze(terminalOutput);
+      // 只使用从上次交互结束后的新内容进行分析
+      const newOutput = terminalOutput.slice(this.lastInteractionBufferEnd);
+      if (!newOutput || newOutput.trim().length < 10) {
+        logger.debug('新输出内容太少，跳过分析');
+        return;
+      }
 
-      // 保存上下文
+      // 使用 LLM 分析（只分析新内容）
+      const analysis = await this.interactionAnalyzer.analyze(newOutput);
+
+      // 记录当前交互结束时的缓冲区位置
+      this.lastInteractionBufferEnd = terminalOutput.length;
+
+      // 保存上下文（只保存新内容）
       const contextId = Date.now().toString();
-      this.interactionContext.setContext(contextId, analysis, terminalOutput);
+      this.interactionContext.setContext(contextId, analysis, newOutput);
 
       // 生成消息
       const message = this.interactionAnalyzer.formatMessage(analysis);
@@ -637,6 +648,17 @@ class OpenHermit {
       // 清除上下文
       this.interactionContext.clearContext();
 
+      // 清理缓冲区：移除本次交互之前的内容，只保留最新内容
+      // 这样下次分析时就不会包含旧的交互选项
+      if (this.lastInteractionBufferEnd > 0 && this.terminalBuffer.length > this.lastInteractionBufferEnd) {
+        this.terminalBuffer = this.terminalBuffer.slice(this.lastInteractionBufferEnd);
+        logger.debug({ removedLength: this.lastInteractionBufferEnd }, '🧹 清理交互前的缓冲区内容');
+      } else if (this.lastInteractionBufferEnd > 0) {
+        // 如果缓冲区已经被更新但位置不对，清空缓冲区
+        this.terminalBuffer = '';
+      }
+      this.lastInteractionBufferEnd = 0;
+
       // 发送解析结果到 PTY
       if (result.understood && result.input) {
         logger.info({ input: result.input }, '✅ LLM 解析用户回复成功');
@@ -655,6 +677,11 @@ class OpenHermit {
       logger.error({ error: error.message }, '解析用户回复失败');
       // 降级：直接发送原始输入
       this.interactionContext.clearContext();
+      // 清理缓冲区
+      if (this.lastInteractionBufferEnd > 0) {
+        this.terminalBuffer = this.terminalBuffer.slice(this.lastInteractionBufferEnd);
+      }
+      this.lastInteractionBufferEnd = 0;
       this.writeCommand(userReply);
     }
   }

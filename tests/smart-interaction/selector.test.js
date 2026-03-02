@@ -93,8 +93,11 @@ describe('SelectionDetector', () => {
       };
 
       const formatted = detector.formatSelectionPrompt(selection);
-      expect(formatted).toContain('y(同意)');
-      expect(formatted).toContain('n(拒绝)');
+      // 输出包含 ANSI 颜色代码，所以检查关键文本
+      expect(formatted).toContain('y');
+      expect(formatted).toContain('同意');
+      expect(formatted).toContain('n');
+      expect(formatted).toContain('拒绝');
     });
   });
 });
