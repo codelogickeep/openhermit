@@ -1329,9 +1329,6 @@ class OpenHermit {
 
     // 立即发送状态信息
     this.channel.sendImmediate(msg);
-
-    // 同时刷新缓冲区内容
-    this.channel.flushBuffer();
   }
 
   /**
