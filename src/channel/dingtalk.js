@@ -562,6 +562,11 @@ class DingTalkChannel extends EventEmitter {
 | \`-status\` | 查看执行状态 |
 | \`-help\` | 查看帮助 |
 
+### ⌨️ 快捷指令
+| 指令 | 说明 |
+|------|------|
+| \`esc\` | 终止 Claude 当前任务 |
+
 ### 💡 使用说明
 - 带 \`-\` 前缀的命令由 OpenHermit 处理
 - 其他所有内容直接发送给 Claude 终端`;
@@ -611,6 +616,11 @@ ${dirList}
 | \`-claude [任务]\` | 启动 Claude Code |
 | \`-status\` | 查看执行状态 |
 | \`-help\` | 查看帮助 |
+
+### ⌨️ 快捷指令
+| 指令 | 说明 |
+|------|------|
+| \`esc\` | 终止 Claude 当前任务 |
 
 ### 💡 使用说明
 - 带 \`-\` 前缀的命令由 OpenHermit 处理

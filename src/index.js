@@ -673,6 +673,12 @@ class OpenHermit {
     // 打印接收日志
     logger.info({ text: trimmed, senderId }, '收到钉钉消息');
 
+    // 检测 ESC 指令：终止 Claude Code 当前任务
+    if (trimmed.toLowerCase() === 'esc' || trimmed === '\x1b' || trimmed === 'escape') {
+      this.handleEscCommand();
+      return;
+    }
+
     // HITL 激活状态下，优先处理 y/n 回复
     if (this.hitlActive) {
       const lower = trimmed.toLowerCase();
@@ -1199,9 +1205,15 @@ class OpenHermit {
 |------|------|
 | \`!<命令>\` | 在工作目录执行 bash 命令 |
 
+### ⌨️ 快捷指令
+| 指令 | 说明 |
+|------|------|
+| \`esc\` | 终止 Claude Code 当前任务（发送两次 ESC） |
+
 ### 💡 使用说明
 - 带 \`-\` 前缀的命令由 OpenHermit 处理
 - 带 \`!\` 前缀的命令在工作目录执行 bash
+- 发送 \`esc\` 可终止 Claude Code 当前任务
 - 其他所有内容直接发送给 Claude 终端`;
 
     this.channel.send(msg, { immediate: true });
@@ -1340,6 +1352,40 @@ class OpenHermit {
 
     // 清空缓冲区
     this.pausedBuffer = '';
+  }
+
+  /**
+   * 处理 ESC 指令：终止 Claude Code 当前任务
+   * 发送两次 ESC 键来中断当前操作
+   */
+  handleEscCommand() {
+    const session = this.intentParser.getSession();
+
+    if (session.mode !== 'claude_active') {
+      this.channel.send('⚠️ Claude 未启动，无需终止', { immediate: true });
+      return;
+    }
+
+    // 发送两次 ESC 键（\x1b）来终止 Claude Code 的当前任务
+    logger.info('🛑 收到 ESC 指令，发送两次 ESC 键终止当前任务');
+
+    // 发送第一次 ESC
+    this.pty.write('\x1b');
+
+    // 短暂延迟后发送第二次 ESC
+    setTimeout(() => {
+      this.pty.write('\x1b');
+      logger.info('✅ 已发送两次 ESC 键');
+    }, 100);
+
+    // 发送反馈消息
+    this.channel.send('🛑 已发送终止指令（ESC x2）', { immediate: true });
+
+    // 重置相关状态
+    this.waitingForUserReply = false;
+    this.interactionContext.clearContext();
+    this.lastInteractionBufferEnd = 0;
+    this.lastAnalyzedPosition = 0;
   }
 
   /**

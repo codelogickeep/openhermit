@@ -74,7 +74,7 @@ ALLOWED_ROOT_DIR=/Users/xxx/projects
 # ===== 智能交互模式（推荐）=====
 # 启用后可直接用自然语言与 Claude Code 交互
 DASHSCOPE_API_KEY=sk-xxx                    # 阿里云百炼 API Key
-DASHSCOPE_MODEL=qwen3.5-flash               # 模型（可选）
+DASHSCOPE_MODEL=qwen-plus                   # 模型（可选）
 
 # ===== 可选配置 =====
 # DINGTALK_USER_ID=your_staff_id            # 启动时主动推送消息
@@ -98,7 +98,7 @@ openhermit
 Node.js: v18.x.x
 ✅ 环境检查通过
 [INFO] 智能交互模式已启用
-[INFO] LLM 客户端初始化成功 model: "qwen3.5-flash"
+[INFO] LLM 客户端初始化成功 model: "qwen-plus"
 [INFO] OpenHermit 启动完成
 ```
 
@@ -113,6 +113,12 @@ Node.js: v18.x.x
 | `-claude [任务]` | 启动 Claude Code |
 | `-status` | 查看执行状态 |
 | `-help` | 查看帮助 |
+
+### 快捷指令
+
+| 指令 | 说明 |
+|------|------|
+| `esc` | 终止 Claude Code 当前任务（发送两次 ESC 键） |
 
 ### Claude 内容
 
@@ -138,6 +144,7 @@ Claude: [确认操作]
 2. 发送 -cd my-project 切换到项目目录
 3. 发送 -claude 启动 Claude Code
 4. 发送你的需求给 Claude
+5. 如需终止当前任务，发送 esc
 ```
 
 ## 🔒 安全机制
@@ -177,7 +184,7 @@ openhermit/
 │   ├── formatter/        # 输出格式化
 │   ├── selector/         # 选择检测
 │   └── utils/            # 工具
-└── tests/                # 测试（117 用例）
+└── tests/                # 测试（157 用例）
 ```
 
 ## 📄 许可证
