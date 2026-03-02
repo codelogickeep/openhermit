@@ -105,6 +105,8 @@ class OpenHermit {
     this.terminalLogFile = null;
     this.terminalLogStream = null;
     this.maxLogFileSize = 5 * 1024 * 1024; // 5MB
+    this.terminalLogBuffer = '';  // 日志缓冲区
+    this.terminalLogFlushTimer = null;  // 刷新定时器
 
     // PTY 输出处理队列
     this.ptyQueue = [];
@@ -159,9 +161,14 @@ class OpenHermit {
     try {
       this.terminalLogFile = this.generateLogFileName();
       this.terminalLogStream = fs.createWriteStream(this.terminalLogFile, { flags: 'a' });
-      this.terminalLogStream.write(`\n${'='.repeat(60)}\n`);
-      this.terminalLogStream.write(`# OpenHermit 启动 - ${new Date().toISOString()}\n`);
-      this.terminalLogStream.write(`${'='.repeat(60)}\n\n`);
+      this.terminalLogBuffer = '';
+
+      const timestamp = new Date().toLocaleString('zh-CN', { hour12: false });
+      this.terminalLogStream.write(`\n${'═'.repeat(70)}\n`);
+      this.terminalLogStream.write(`  OpenHermit 启动 - ${timestamp}\n`);
+      this.terminalLogStream.write(`  日志文件: ${this.terminalLogFile}\n`);
+      this.terminalLogStream.write(`${'═'.repeat(70)}\n\n`);
+
       logger.info({ file: this.terminalLogFile }, '📝 终端输出日志文件已创建');
     } catch (error) {
       logger.error({ error: error.message }, '创建终端日志文件失败');
@@ -169,11 +176,35 @@ class OpenHermit {
   }
 
   /**
-   * 写入终端输出到日志文件
+   * 写入终端输出到日志文件（使用缓冲区）
    * @param {string} data - 终端输出数据
    */
   writeToTerminalLog(data) {
     if (!this.terminalLogStream || !data || !data.trim()) return;
+
+    // 追加到缓冲区
+    this.terminalLogBuffer += data;
+
+    // 清除之前的定时器
+    if (this.terminalLogFlushTimer) {
+      clearTimeout(this.terminalLogFlushTimer);
+    }
+
+    // 500ms 后刷新缓冲区，或者缓冲区超过 1000 字符时立即刷新
+    if (this.terminalLogBuffer.length >= 1000) {
+      this.flushTerminalLog();
+    } else {
+      this.terminalLogFlushTimer = setTimeout(() => {
+        this.flushTerminalLog();
+      }, 500);
+    }
+  }
+
+  /**
+   * 刷新终端日志缓冲区
+   */
+  flushTerminalLog() {
+    if (!this.terminalLogStream || !this.terminalLogBuffer.trim()) return;
 
     try {
       // 检查文件大小，超过限制则轮转
@@ -182,8 +213,35 @@ class OpenHermit {
         this.rotateLogFile();
       }
 
-      const timestamp = new Date().toISOString();
-      this.terminalLogStream.write(`[${timestamp}]\n${data}\n`);
+      const timestamp = new Date().toLocaleString('zh-CN', { hour12: false });
+      const content = this.terminalLogBuffer;
+
+      this.terminalLogStream.write(`\n${'─'.repeat(70)}\n`);
+      this.terminalLogStream.write(`  [${timestamp}]\n`);
+      this.terminalLogStream.write(`${'─'.repeat(70)}\n`);
+      this.terminalLogStream.write(content);
+      this.terminalLogStream.write('\n');
+
+      // 清空缓冲区
+      this.terminalLogBuffer = '';
+    } catch (error) {
+      // 忽略写入错误
+    }
+  }
+
+  /**
+   * 写入缓冲区信息到日志（用于调试）
+   * @param {string} bufferData - 缓冲区数据
+   */
+  writeBufferToLog(bufferData) {
+    if (!this.terminalLogStream || !bufferData) return;
+
+    try {
+      this.terminalLogStream.write(`\n${'▼'.repeat(35)}\n`);
+      this.terminalLogStream.write(`  [缓冲区数据 - 用于 LLM 分析]\n`);
+      this.terminalLogStream.write(`${'▼'.repeat(35)}\n`);
+      this.terminalLogStream.write(bufferData);
+      this.terminalLogStream.write('\n');
     } catch (error) {
       // 忽略写入错误
     }
@@ -193,6 +251,8 @@ class OpenHermit {
    * 轮转日志文件
    */
   rotateLogFile() {
+    // 先刷新缓冲区
+    this.flushTerminalLog();
     this.closeTerminalLog();
     this.initTerminalLog();
     logger.info('📝 终端日志文件已轮转');
@@ -202,10 +262,22 @@ class OpenHermit {
    * 关闭终端日志文件
    */
   closeTerminalLog() {
+    // 清除定时器
+    if (this.terminalLogFlushTimer) {
+      clearTimeout(this.terminalLogFlushTimer);
+      this.terminalLogFlushTimer = null;
+    }
+
+    // 刷新剩余缓冲区
+    if (this.terminalLogBuffer) {
+      this.flushTerminalLog();
+    }
+
     if (this.terminalLogStream) {
-      this.terminalLogStream.write(`\n${'='.repeat(60)}\n`);
-      this.terminalLogStream.write(`# OpenHermit 停止 - ${new Date().toISOString()}\n`);
-      this.terminalLogStream.write(`${'='.repeat(60)}\n`);
+      const timestamp = new Date().toLocaleString('zh-CN', { hour12: false });
+      this.terminalLogStream.write(`\n${'═'.repeat(70)}\n`);
+      this.terminalLogStream.write(`  OpenHermit 停止 - ${timestamp}\n`);
+      this.terminalLogStream.write(`${'═'.repeat(70)}\n`);
       this.terminalLogStream.end();
       this.terminalLogStream = null;
     }
@@ -474,6 +546,9 @@ class OpenHermit {
         logger.debug('新输出内容太少，跳过分析');
         return;
       }
+
+      // 记录缓冲区数据到日志文件
+      this.writeBufferToLog(newOutput);
 
       // 使用 LLM 分析
       const analysis = await this.interactionAnalyzer.analyze(newOutput);
