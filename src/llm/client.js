@@ -5,13 +5,13 @@ import { Prompts } from './prompts.js';
 
 /**
  * 阿里云百炼（DashScope）API 客户端
- * 使用 OpenAI 兼容模式调用通义千问模型
+ * 使用百炼平台原生 API 调用通义千问模型
  */
 class LLMClient {
   constructor() {
     this.apiKey = null;
     this.model = null;
-    this.baseUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+    this.baseUrl = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation';
     this.initialized = false;
     this.maxRetries = 2;  // 最大重试次数
     this.retryDelay = 1000;  // 重试延迟（毫秒）
@@ -80,17 +80,23 @@ class LLMClient {
 
         logger.debug({ model: this.model, promptLength: prompt.length, attempt }, '调用 LLM API');
 
+        // 使用百炼平台原生 API 格式
         const response = await axios({
           method: 'POST',
-          url: `${this.baseUrl}/chat/completions`,
+          url: this.baseUrl,
           data: {
             model: this.model,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: prompt }
-            ],
-            temperature,
-            max_tokens: maxTokens
+            input: {
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: prompt }
+              ]
+            },
+            parameters: {
+              result_format: 'message',
+              temperature,
+              max_tokens: maxTokens
+            }
           },
           headers: {
             'Content-Type': 'application/json',
@@ -100,7 +106,8 @@ class LLMClient {
           proxy: false
         });
 
-        const content = response.data?.choices?.[0]?.message?.content;
+        // 百炼平台原生 API 响应格式
+        const content = response.data?.output?.choices?.[0]?.message?.content;
         if (!content) {
           throw new Error('API 返回空响应');
         }
@@ -112,7 +119,7 @@ class LLMClient {
         return content;
       } catch (error) {
         lastError = error;
-        const errorMsg = error.response?.data?.error?.message || error.message;
+        const errorMsg = error.response?.data?.message || error.response?.data?.error?.message || error.message;
 
         // 超时或网络错误，尝试重试
         if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT' || errorMsg.includes('timeout')) {

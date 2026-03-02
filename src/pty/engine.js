@@ -53,7 +53,16 @@ class PTYEngine {
       });
 
       this.pty.onData((data) => {
-        this.dataCallbacks.forEach(cb => cb(data));
+        // 过滤终端焦点事件序列（\x1b[O 失去焦点，\x1b[I 获得焦点）
+        // 这些序列是终端焦点变化时产生的，不应该被传递
+        const filteredData = data
+          .replace(/\x1b\[O/g, '')
+          .replace(/\x1b\[I/g, '')
+          .replace(/\x1b/g, ''); // 过滤残留的 ESC 字符
+
+        if (filteredData) {
+          this.dataCallbacks.forEach(cb => cb(filteredData));
+        }
       });
 
       this.pty.onExit(({ exitCode, signal }) => {

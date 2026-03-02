@@ -63,6 +63,30 @@ describe('stripper', () => {
       const output = filterControlChars(input);
       expect(output).toBe('list[1] item[2]');
     });
+
+    it('应该过滤终端焦点事件序列（失去焦点 \\x1b[O）', () => {
+      const input = 'text\x1b[Omore';
+      const output = filterControlChars(input);
+      expect(output).toBe('textmore');
+    });
+
+    it('应该过滤终端焦点事件序列（获得焦点 \\x1b[I）', () => {
+      const input = 'text\x1b[Imore';
+      const output = filterControlChars(input);
+      expect(output).toBe('textmore');
+    });
+
+    it('应该过滤单独的 ESC 字符', () => {
+      const input = 'hello\x1bworld';
+      const output = filterControlChars(input);
+      expect(output).toBe('helloworld');
+    });
+
+    it('应该过滤字符集选择序列', () => {
+      const input = '\x1b(Btext';
+      const output = filterControlChars(input);
+      expect(output).toBe('text');
+    });
   });
 
   describe('filterLoadingAnimations', () => {
@@ -96,6 +120,23 @@ describe('stripper', () => {
       expect(purify('')).toBe('');
       expect(purify(null)).toBe('');
       expect(purify(undefined)).toBe('');
+    });
+
+    it('应该过滤终端焦点事件序列（完整净化流程）', () => {
+      // 失去焦点事件: \x1b[O
+      const input1 = 'hello\x1b[Oworld';
+      const output1 = purify(input1);
+      expect(output1).toBe('helloworld');
+
+      // 获得焦点事件: \x1b[I
+      const input2 = 'hello\x1b[Iworld';
+      const output2 = purify(input2);
+      expect(output2).toBe('helloworld');
+
+      // 混合焦点事件
+      const input3 = '\x1b[O\x1b[I';
+      const output3 = purify(input3);
+      expect(output3).toBe('');
     });
   });
 });

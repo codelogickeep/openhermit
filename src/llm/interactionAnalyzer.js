@@ -92,7 +92,7 @@ class LLMInteractionAnalyzer {
         const response = await this.llmClient.chat(prompt, {
           temperature: 0.2,
           maxTokens: 500,
-          timeout: 5000,
+          timeout: 20000,
           systemPrompt: '你是一个终端交互分析助手，只返回 JSON 格式结果。'
         });
 
@@ -168,7 +168,7 @@ class LLMInteractionAnalyzer {
         const response = await this.llmClient.chat(prompt, {
           temperature: 0.2,
           maxTokens: 300,
-          timeout: 5000,
+          timeout: 20000,
           systemPrompt: '你是一个用户意图解析助手，只返回 JSON 格式结果。'
         });
 

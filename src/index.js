@@ -282,11 +282,6 @@ class OpenHermit {
     // 净化数据（去除 ANSI 码、控制字符、加载动画）
     const cleanData = purify(data);
 
-    // 调试：直接打印净化后的数据
-    if (cleanData && cleanData.trim()) {
-      console.log(cleanData);
-    }
-
     if (!cleanData || !cleanData.trim()) return;
 
     // 本地终端输出：显示状态指示器
@@ -333,21 +328,23 @@ class OpenHermit {
         this.printSelectionToLocalTerminal(standardSelection);
       }
     } else {
-      // 2. 非标准交互：使用 LLM 分析
-      // 检测是否有等待用户输入的特征
-      const hasInputPrompt = this.detectInputPrompt(cleanData);
-      if (hasInputPrompt && this.smartMode) {
-        const promptKey = this.terminalBuffer.slice(-200); // 用最后 200 字符作为 key
-        if (this.lastSentOptionsKey !== promptKey) {
-          this.lastSentOptionsKey = promptKey;
-          // 异步分析，不阻塞
-          this.handleNonStandardInteraction(this.terminalBuffer);
+      // 先检测任务是否完成
+      const isTaskCompleted = this.checkTaskCompletion(cleanData);
+
+      // 2. 非标准交互：使用 LLM 分析（任务完成后不触发）
+      if (!isTaskCompleted) {
+        // 检测是否有等待用户输入的特征
+        const hasInputPrompt = this.detectInputPrompt(cleanData);
+        if (hasInputPrompt && this.smartMode) {
+          const promptKey = this.terminalBuffer.slice(-200); // 用最后 200 字符作为 key
+          if (this.lastSentOptionsKey !== promptKey) {
+            this.lastSentOptionsKey = promptKey;
+            // 异步分析，不阻塞
+            this.handleNonStandardInteraction(this.terminalBuffer);
+          }
         }
       }
     }
-
-    // 检测任务是否完成（用于状态更新，但不主动推送）
-    this.checkTaskCompletion(cleanData);
 
     // 终端输出只缓冲，不主动推送到钉钉
     // 用户可以通过 -status 命令查看
@@ -370,10 +367,19 @@ class OpenHermit {
       /what would you like/i,
       /how can i help/i,
       /continue\?/i,
-      /❯.*$/,
     ];
 
-    return inputPatterns.some(p => p.test(data));
+    // 单独检测提示符，但需要确保不是单纯的终端提示符
+    // 只有当提示符前面有实际的交互内容时才算
+    const hasPrompt = /❯.*$/.test(data);
+    const hasOnlyPrompt = /^\s*❯\s*$/.test(data.trim());
+
+    // 如果只有提示符，不算作输入提示
+    if (hasOnlyPrompt) {
+      return false;
+    }
+
+    return inputPatterns.some(p => p.test(data)) || (hasPrompt && data.trim().length > 50);
   }
 
   /**
