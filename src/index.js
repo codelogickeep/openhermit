@@ -133,6 +133,11 @@ class OpenHermit {
     this.lastAnalyzedPosition = 0;  // 上次分析时的缓冲区位置
     this.waitingForUserReply = false;  // 是否正在等待用户回复
 
+    // 延迟检测机制
+    this.interactionCheckTimer = null;  // 交互检测定时器
+    this.interactionCheckDelay = 2000;  // 延迟检测时间（毫秒）
+    this.lastOutputTime = 0;  // 最后一次输出时间
+
     if (this.smartMode) {
       logger.info('智能交互模式已启用');
     }
@@ -481,20 +486,41 @@ class OpenHermit {
     // 检测任务是否完成
     const isTaskCompleted = this.checkTaskCompletion(cleanData);
 
-    // 使用 LLM 分析终端输出（任务完成后不触发，等待用户回复时不触发）
+    // 更新最后输出时间
+    this.lastOutputTime = Date.now();
+
+    // 使用延迟检测机制：等待输出稳定后再触发 LLM 分析
+    // 任务完成后不触发，等待用户回复时不触发
     if (!isTaskCompleted && this.smartMode && !this.waitingForUserReply) {
       // 检测是否有等待用户输入的简单特征（作为触发 LLM 分析的条件）
       const hasInputHint = this.hasInputHint(cleanData);
+
       if (hasInputHint) {
-        // 使用缓冲区位置作为去重 key
-        const currentPosition = this.terminalBuffer.length;
-        if (currentPosition > this.lastAnalyzedPosition + 100) {
-          // 至少有 100 字符的新内容才触发分析
-          this.lastAnalyzedPosition = currentPosition;
-          logger.info({ bufferLength: this.terminalBuffer.length }, '🚀 触发 LLM 交互分析');
-          // 异步分析，不阻塞
-          this.handleLLMInteractionAnalysis(this.terminalBuffer);
+        // 清除之前的定时器
+        if (this.interactionCheckTimer) {
+          clearTimeout(this.interactionCheckTimer);
         }
+
+        // 设置延迟检测：等待 2 秒没有新输出才触发分析
+        this.interactionCheckTimer = setTimeout(() => {
+          // 检查是否真的没有新输出
+          const timeSinceLastOutput = Date.now() - this.lastOutputTime;
+          if (timeSinceLastOutput >= this.interactionCheckDelay - 100) {  // 允许 100ms 误差
+            // 使用缓冲区位置作为去重 key
+            const currentPosition = this.terminalBuffer.length;
+            if (currentPosition > this.lastAnalyzedPosition + 50) {
+              // 至少有 50 字符的新内容才触发分析
+              this.lastAnalyzedPosition = currentPosition;
+              logger.info({
+                bufferLength: this.terminalBuffer.length,
+                timeSinceLastOutput
+              }, '🚀 延迟触发 LLM 交互分析');
+              // 异步分析，不阻塞
+              this.handleLLMInteractionAnalysis(this.terminalBuffer);
+            }
+          }
+          this.interactionCheckTimer = null;
+        }, this.interactionCheckDelay);
       }
     }
 
