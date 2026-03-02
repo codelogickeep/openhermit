@@ -35,6 +35,10 @@ export class TaskManager {
     this.completionCheckTimer = null;
     this.completionCheckTimeout = 30000; // 30秒无输出则检测
     this.lastCompletionCheckTime = 0;
+
+    // 防重复发送完成通知
+    this.lastCompletionNotificationTime = 0;
+    this.completionNotificationCooldown = 5000; // 5秒内不重复发送完成通知
   }
 
   /**
@@ -61,6 +65,7 @@ export class TaskManager {
 
   /**
    * 检测任务是否完成
+   * 注意：规则检测只保留明确的完成标志，其他情况由 LLM 超时检测判断
    * @param {string} data - PTY 输出数据
    * @returns {boolean}
    */
@@ -70,25 +75,26 @@ export class TaskManager {
       return false;
     }
 
-    // 任务完成标志
+    // 检查是否在冷却期内（避免重复发送完成通知）
+    const now = Date.now();
+    if (now - this.lastCompletionNotificationTime < this.completionNotificationCooldown) {
+      return false;
+    }
+
+    // 任务完成标志 - 只保留明确的 Claude Code 完成标志
+    // 注意：移除了模糊的 idlePattern 检测，避免误判
     const completionPatterns = [
-      /completed|finished|done|完成|成功/i,
-      /✓|✔|✅/,
-      /任务.*完成/,
-      /已.*完成/,
-      /successfully/i,
       // Claude Code 特有的完成标志
       /Crunched\s*(for|in)\s*\d+s/i,  // "Crunched for 38s" 表示任务完成
+      /Brewed\s*(for|in)\s*\d+s/i,    // "Brewed for 43s" 表示任务完成
     ];
 
-    // 检测 Claude Code 空闲提示符（任务完成后的等待状态）
-    // 模式：❯ 后面只有可选的帮助提示（如 ?forshortcuts）
-    const idlePattern = /❯\s*(\?forshortcuts)?\s*$/;
-    const isIdle = idlePattern.test(data);
-
-    const isCompleted = completionPatterns.some(p => p.test(data)) || isIdle;
+    const isCompleted = completionPatterns.some(p => p.test(data));
 
     if (isCompleted) {
+      // 更新最后发送时间
+      this.lastCompletionNotificationTime = now;
+
       this.status.phase = TaskPhase.COMPLETED;
       this.status.isRunning = false;
 
@@ -100,7 +106,7 @@ export class TaskManager {
 
       // 清除状态行，避免 ANSI 转义序列残留
       process.stdout.write('\r\x1b[K\n');
-      logger.info({ isIdle, dataMatch: data.slice(-100) }, '任务完成检测：检测到完成标志');
+      logger.info({ dataMatch: data.slice(-100) }, '任务完成检测：检测到完成标志');
     }
 
     return isCompleted;
@@ -164,7 +170,7 @@ export class TaskManager {
         this.status.isRunning = false;
         logger.info('✅ 超时无输出，任务已完成（缓冲区内容太少）');
         process.stdout.write('\r\x1b[K\n');
-        return { needsInteraction: false, type: 'none' };
+        return { needsInteraction: false, type: 'none', taskCompleted: true };
       }
 
       logger.info({ lineCount: recentLines.length, charCount: recentOutput.length }, '🤖 超时检测：使用 LLM 分析是否有后续动作');
@@ -180,7 +186,16 @@ export class TaskManager {
         return analysis;
       }
 
-      // 不需要交互，标记任务完成
+      // 如果 LLM 判断任务完成
+      if (analysis.taskCompleted) {
+        this.status.phase = TaskPhase.COMPLETED;
+        this.status.isRunning = false;
+        logger.info('✅ 超时检测：LLM 判断任务已完成');
+        process.stdout.write('\r\x1b[K\n');
+        return analysis;
+      }
+
+      // 不需要交互且任务未明确完成，标记任务完成（超时默认完成）
       this.status.phase = TaskPhase.COMPLETED;
       this.status.isRunning = false;
       logger.info('✅ 超时无输出，任务已完成（无需后续动作）');
@@ -188,14 +203,14 @@ export class TaskManager {
       // 清除状态行
       process.stdout.write('\r\x1b[K\n');
 
-      return { needsInteraction: false, type: 'none' };
+      return { needsInteraction: false, type: 'none', taskCompleted: true };
     } catch (error) {
       logger.error({ error: error.message }, 'LLM 超时检测失败');
       // 出错时也标记完成
       this.status.phase = TaskPhase.COMPLETED;
       this.status.isRunning = false;
       process.stdout.write('\r\x1b[K\n');
-      return { needsInteraction: false, type: 'none' };
+      return { needsInteraction: false, type: 'none', taskCompleted: true };
     }
   }
 

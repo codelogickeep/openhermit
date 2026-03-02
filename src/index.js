@@ -405,37 +405,33 @@ class OpenHermit {
 
     // 使用延迟检测机制：等待输出稳定后再触发 LLM 分析
     // 任务完成后不触发，等待用户回复时不触发
+    // 所有交互判断都交给 LLM 分析，不再使用规则预判
     if (!isTaskCompleted && this.smartMode && !this.waitingForUserReply) {
-      // 检测是否有等待用户输入的简单特征（作为触发 LLM 分析的条件）
-      const hasInputHint = this.hasInputHint(cleanData);
-
-      if (hasInputHint) {
-        // 清除之前的定时器
-        if (this.interactionCheckTimer) {
-          clearTimeout(this.interactionCheckTimer);
-        }
-
-        // 设置延迟检测：等待 2 秒没有新输出才触发分析
-        this.interactionCheckTimer = setTimeout(() => {
-          // 检查是否真的没有新输出
-          const timeSinceLastOutput = Date.now() - this.lastOutputTime;
-          if (timeSinceLastOutput >= this.interactionCheckDelay - 100) {  // 允许 100ms 误差
-            // 使用缓冲区位置作为去重 key
-            const currentPosition = this.terminalBuffer.length;
-            if (currentPosition > this.lastAnalyzedPosition + 50) {
-              // 至少有 50 字符的新内容才触发分析
-              this.lastAnalyzedPosition = currentPosition;
-              logger.info({
-                bufferLength: this.terminalBuffer.length,
-                timeSinceLastOutput
-              }, '🚀 延迟触发 LLM 交互分析');
-              // 异步分析，不阻塞
-              this.handleLLMInteractionAnalysis(this.terminalBuffer);
-            }
-          }
-          this.interactionCheckTimer = null;
-        }, this.interactionCheckDelay);
+      // 清除之前的定时器
+      if (this.interactionCheckTimer) {
+        clearTimeout(this.interactionCheckTimer);
       }
+
+      // 设置延迟检测：等待输出稳定后才触发 LLM 分析
+      this.interactionCheckTimer = setTimeout(() => {
+        // 检查是否真的没有新输出
+        const timeSinceLastOutput = Date.now() - this.lastOutputTime;
+        if (timeSinceLastOutput >= this.interactionCheckDelay - 100) {  // 允许 100ms 误差
+          // 使用缓冲区位置作为去重 key
+          const currentPosition = this.terminalBuffer.length;
+          if (currentPosition > this.lastAnalyzedPosition + 50) {
+            // 至少有 50 字符的新内容才触发分析
+            this.lastAnalyzedPosition = currentPosition;
+            logger.info({
+              bufferLength: this.terminalBuffer.length,
+              timeSinceLastOutput
+            }, '🚀 延迟触发 LLM 交互分析');
+            // 异步分析，不阻塞
+            this.handleLLMInteractionAnalysis(this.terminalBuffer);
+          }
+        }
+        this.interactionCheckTimer = null;
+      }, this.interactionCheckDelay);
     }
 
     // 终端输出只缓冲，不主动推送到钉钉
@@ -444,40 +440,6 @@ class OpenHermit {
     if (this.channel.buffer.length > this.channel.maxBufferSize) {
       this.channel.buffer = this.channel.buffer.slice(-this.channel.maxBufferSize);
     }
-  }
-
-  /**
-   * 检测是否有等待用户输入的简单特征（作为触发 LLM 的条件）
-   * @param {string} data - 净化后的数据
-   * @returns {boolean} 是否可能需要用户输入
-   */
-  hasInputHint(data) {
-    // 排除正在处理中的状态（思考中、执行中等）
-    if (/thinking|actioning|processing|loading/i.test(data)) {
-      return false;
-    }
-
-    // 排除 Claude Code 空闲状态（任务已完成）
-    // ❯ 后面只有 ?forshortcuts 等帮助提示，不是真正的交互请求
-    if (/❯\s*(\?forshortcuts)?\s*$/.test(data)) {
-      return false;
-    }
-
-    // 检测明确的交互提示特征
-    const hints = [
-      /\(y\/n\)/i,     // y/n 确认
-      /\[\d+\/\d+\]/,  // 进度标记 [1/3]
-      /^\s*\d+[.)\]]\s+.+/m,  // 编号选项（需要有内容）
-    ];
-
-    // 检测问号结尾，但排除 ?forshortcuts 这类帮助提示
-    const hasQuestion = /\?$/.test(data) && !/\?forshortcuts/i.test(data);
-
-    // 检测提示符，但要确保前面有实际内容（排除空闲状态）
-    const hasPrompt = /❯/.test(data) && !/❯\s*(\?forshortcuts)?\s*$/.test(data);
-    const hasContent = data.trim().length > 100;
-
-    return hints.some(h => h.test(data)) || hasQuestion || (hasPrompt && hasContent);
   }
 
   /**
@@ -500,6 +462,15 @@ class OpenHermit {
 
       // 使用 LLM 分析
       const analysis = await this.interactionAnalyzer.analyze(newOutput);
+
+      // 如果 LLM 判断任务已完成
+      if (analysis.taskCompleted) {
+        this.taskManager.status.phase = 'completed';
+        this.taskManager.status.isRunning = false;
+        this.channel.send('✅ 任务已完成', { immediate: true });
+        logger.info('📤 LLM 判断任务已完成');
+        return;
+      }
 
       // 检查是否需要用户交互
       if (!analysis.needsInteraction) {
@@ -536,7 +507,7 @@ class OpenHermit {
 
   /**
    * 超时完成检测
-   * 当长时间无输出时调用
+   * 当长时间无输出时调用，使用 LLM 检查是否有遗漏的用户交互
    */
   async checkCompletionByLLM() {
     const analysis = await this.taskManager.checkCompletionByLLM(this.terminalBuffer, this.interactionAnalyzer);
@@ -545,6 +516,14 @@ class OpenHermit {
       return;
     }
 
+    // 如果 LLM 判断任务已完成
+    if (analysis.taskCompleted) {
+      this.channel.send('✅ 任务已完成', { immediate: true });
+      logger.info('📤 超时检测：LLM 判断任务已完成');
+      return;
+    }
+
+    // 如果需要用户交互
     if (analysis.needsInteraction && !this.waitingForUserReply) {
       // 需要用户确认后续动作，发送提示
       const message = this.interactionAnalyzer.formatMessage(analysis);
@@ -555,12 +534,8 @@ class OpenHermit {
       this.interactionContext.setContext(contextId, analysis, this.terminalBuffer.slice(-2000));
       this.lastInteractionBufferEnd = this.terminalBuffer.length;
 
-      this.channel.send(message, { immediate: true, taskCompleted: true });
+      this.channel.send(message, { immediate: true, taskCompleted: false });
       logger.info({ type: analysis.type }, '📤 超时检测发现需要用户确认后续动作');
-    } else if (!analysis.needsInteraction) {
-      // 任务完成，发送通知给用户
-      this.channel.send('✅ 任务已完成', { immediate: true });
-      logger.info('📤 已发送任务完成通知');
     }
   }
 

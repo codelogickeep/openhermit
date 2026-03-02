@@ -14,7 +14,7 @@ const AnalyzePrompts = {
   /**
    * 终端输出分析 Prompt
    */
-  analyzeOutput: `你是一个终端交互分析助手。分析以下 Claude Code 终端输出，判断是否需要用户交互。
+  analyzeOutput: `你是一个终端交互分析助手。分析以下 Claude Code 终端输出，判断当前状态。
 
 【终端输出】
 """
@@ -25,6 +25,7 @@ const AnalyzePrompts = {
 {
   "needsInteraction": true/false,
   "type": "selection | text_input | confirmation | none",
+  "taskCompleted": true/false,
   "context": {
     "question": "Claude 正在问用户什么问题？（简洁明了，不超过100字）",
     "options": ["选项1", "选项2", ...],
@@ -34,14 +35,15 @@ const AnalyzePrompts = {
 
 判断标准：
 1. needsInteraction: 如果 Claude 正在等待用户输入，设为 true
-2. type:
+2. taskCompleted: 如果终端显示 "Crunched for XXs" 或 "Brewed for XXs" 或任务已明确完成，设为 true
+3. type:
    - selection: 有编号选项列表供用户选择
    - text_input: 需要用户输入自由文本
    - confirmation: y/n 确认
    - none: Claude 正在思考或执行任务，不需要用户输入
-3. options: 仅当 type 为 selection 时，提取选项列表
-4. question: 提取 Claude 正在问的问题
-5. 只返回 JSON，不要其他内容`,
+4. options: 仅当 type 为 selection 时，提取选项列表
+5. question: 提取 Claude 正在问的问题
+6. 只返回 JSON，不要其他内容`,
 
   /**
    * 用户回复解析 Prompt
