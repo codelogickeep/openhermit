@@ -35,6 +35,17 @@ export function filterControlChars(data) {
   // 过滤残留的 CSI 序列（ESC 被过滤后留下的部分，如 [27m, [0m 等）
   result = result.replace(/\[[0-9;]*[A-Za-z]/g, '');
 
+  // 过滤 OSC 序列（操作系统命令）
+  result = result.replace(/\x1b\].*?\x07/g, '');
+
+  // 过滤字符集选择序列
+  result = result.replace(/\x1b\([a-zA-Z0-9]/g, '');
+  result = result.replace(/\x1b[()][a-zA-Z0-9]/g, '');
+
+  // 过滤其他 ANSI 控制序列
+  result = result.replace(/\x1b[()][a-zA-Z0-9]/g, '');
+  result = result.replace(/\x1b[=?].*?[a-zA-Z]/g, '');
+
   return result;
 }
 

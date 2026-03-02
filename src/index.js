@@ -118,12 +118,16 @@ class OpenHermit {
       maxSize: 10000  // 最大缓冲区大小
     };
 
-    // 日志输出控制
+    // 日志输出控制（重新设计）
     this.logBuffer = '';           // 日志缓冲区
     this.logTimer = null;          // 日志定时器
-    this.lastLogState = '';        // 上次日志状态（用于检测状态变化）
-    this.logDebounceMs = 300;      // 日志防抖时间（毫秒）
+    this.logDebounceMs = 1500;     // 日志防抖时间（毫秒）
     this.statusLineActive = false; // 状态行是否激活
+    this.lineBuffer = [];          // 行缓冲区（用于智能合并）
+    this.lastOutputTime = 0;       // 上次输出时间
+    this.inClaudeUI = false;       // 是否在 Claude UI 中
+    this.pendingOutput = '';       // 待处理的输出
+    this.outputStableTimer = null; // 输出稳定检测定时器
 
     if (this.smartMode) {
       logger.info('智能交互模式已启用');
@@ -131,90 +135,359 @@ class OpenHermit {
   }
 
   /**
-   * 智能日志输出
-   * - 合并短时间内的输出
-   * - 过滤重复的状态动画
-   * - 复刻终端显示效果
+   * 智能日志输出（重新设计）
+   * 核心策略：
+   * 1. 检测输出结束标志（prompt 符号）
+   * 2. 深度过滤终端 UI 元素
+   * 3. 合并短时间内的输出
    */
   smartLog(data) {
     if (!data) return;
 
-    // 清理 ANSI 转义序列
-    const cleanData = data
-      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-      .replace(/\x1b\].*?\x07/g, '');
+    // 第一步：深度清理 ANSI 和终端控制字符
+    const cleanData = this.deepCleanAnsi(data);
 
-    // 检测是否是纯状态动画或单字符
-    const isThinking = /\(thinking\)/.test(cleanData);
-    const isSpinner = /^[·✢✣✤✥✦✧★☆✶✷✸✹✺✻✼❂❃❄❅❆❇❈✽✻✼]+$/.test(cleanData.trim());
-    const isClaudeStatus = /;[⠁⠂⠃⠄⠅⠆⠇⡀⡁⡂⡃⡄⡅⡆⡇]?\s*Claude Code/.test(cleanData);
-    const isSingleChar = cleanData.trim().length <= 2 && !/[a-zA-Z0-9\u4e00-\u9fa5]{2,}/.test(cleanData);
-    const isPureWhitespace = /^[\s\r\n]+$/.test(cleanData);
-
-    // 状态动画：只更新状态行，不打印日志
-    if (isThinking || isSpinner || isClaudeStatus || (isSingleChar && !isPureWhitespace)) {
-      if (!this.statusLineActive) {
-        this.statusLineActive = true;
-        // 使用 \r 覆盖当前行
-        process.stdout.write('\r\x1b[K\x1b[36m⏳ Claude 正在处理...\x1b[0m');
-      }
+    // 第二步：检测是否应该跳过（动画帧、状态更新等）
+    if (this.shouldSkipOutput(cleanData)) {
+      this.updateStatusLine(cleanData);
       return;
     }
 
-    // 纯空白：忽略
-    if (isPureWhitespace) return;
+    // 第三步：添加到待处理缓冲区
+    this.pendingOutput += cleanData;
 
-    // 有实际内容：添加到缓冲区
-    this.logBuffer += cleanData;
-
-    // 清除之前的定时器
-    if (this.logTimer) {
-      clearTimeout(this.logTimer);
+    // 第四步：检测输出结束标志
+    if (this.detectOutputEnd(cleanData)) {
+      // 输出结束，立即刷新
+      this.flushOutput();
+      return;
     }
 
-    // 防抖输出
-    this.logTimer = setTimeout(() => {
-      this.flushLog();
+    // 第五步：防抖等待更多数据
+    this.scheduleFlush();
+  }
+
+  /**
+   * 深度清理 ANSI 转义序列
+   */
+  deepCleanAnsi(data) {
+    return data
+      // 标准 ANSI CSI 序列
+      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+      // OSC 序列（标题、剪贴板等）
+      .replace(/\x1b\].*?\x07/g, '')
+      // 字符集选择
+      .replace(/\x1b\([a-zA-Z0-9]/g, '')
+      .replace(/\x1b[()][a-zA-Z0-9]/g, '')
+      // 残留的 CSI 序列（无 ESC 前缀）
+      .replace(/\[[0-9;]*[a-zA-Z]/g, '')
+      // 其他控制序列
+      .replace(/\x1b[=?].*?[a-zA-Z]/g, '')
+      // SGR 参数残留
+      .replace(/\x1b\[[\d;]*m/g, '');
+  }
+
+  /**
+   * 检测是否应该跳过输出
+   */
+  shouldSkipOutput(data) {
+    const trimmed = data.trim();
+
+    // 空白
+    if (!trimmed || /^[\s\r\n]+$/.test(data)) return true;
+
+    // Spinner 动画字符
+    const spinnerChars = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏','⠎','⠜','⠷','⠯','⠿',
+                          '⠁','⠂','⠃','⠄','⠅','⠆','⠇','⡀','⡁','⡂','⡃','⡄','⡅','⡆','⡇'];
+    if (spinnerChars.some(c => trimmed === c)) return true;
+
+    // 纯 spinner 组合
+    if (/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠎⠜⠷⠯⠿⠁⠂⠃⠄⠅⠆⠇⡀⡁⡂⡃⡄⡅⡆⡇·✢✣✤✥✦✧★☆✶✷✸✹✺✻✼❂❃❄❅❆❇❈✽]+$/.test(trimmed)) return true;
+
+    // 状态动画关键词
+    const statusKeywords = [
+      'thinking', 'actioning', 'perambulating', 'initializing',
+      'processing', 'loading', 'please wait'
+    ];
+    const lowerData = trimmed.toLowerCase();
+    if (statusKeywords.some(k => lowerData.includes(k)) && trimmed.length < 30) return true;
+
+    // 单字符且非字母数字中文
+    if (trimmed.length === 1 && !/[a-zA-Z0-9\u4e00-\u9fa5]/.test(trimmed)) return true;
+
+    // 2字符且全是符号
+    if (trimmed.length === 2 && /^[^\w\u4e00-\u9fa5]+$/.test(trimmed)) return true;
+
+    return false;
+  }
+
+  /**
+   * 更新状态行
+   */
+  updateStatusLine(data) {
+    const statusTexts = {
+      'thinking': '⏳ 思考中...',
+      'actioning': '⚡ 执行中...',
+      'perambulating': '🔄 处理中...',
+      'initializing': '🚀 初始化...',
+      'processing': '⏳ 处理中...',
+      'loading': '📥 加载中...'
+    };
+
+    const lowerData = data.toLowerCase();
+    for (const [key, text] of Object.entries(statusTexts)) {
+      if (lowerData.includes(key)) {
+        if (!this.statusLineActive || this.currentStatusText !== text) {
+          this.statusLineActive = true;
+          this.currentStatusText = text;
+          process.stdout.write(`\r\x1b[K\x1b[36m${text}\x1b[0m`);
+        }
+        return;
+      }
+    }
+
+    // 默认状态
+    if (!this.statusLineActive) {
+      this.statusLineActive = true;
+      process.stdout.write('\r\x1b[K\x1b[36m⏳ Claude 正在处理...\x1b[0m');
+    }
+  }
+
+  /**
+   * 检测输出结束标志
+   */
+  detectOutputEnd(data) {
+    // 检测 prompt 符号（Claude 已完成输出）
+    if (/❯\s*$/.test(data) || /\$\s*$/.test(data)) {
+      return true;
+    }
+
+    // 检测用户输入回显（用户开始输入）
+    if (/❯\s+\S/.test(data)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * 安排刷新
+   */
+  scheduleFlush() {
+    if (this.outputStableTimer) {
+      clearTimeout(this.outputStableTimer);
+    }
+
+    this.outputStableTimer = setTimeout(() => {
+      this.flushOutput();
     }, this.logDebounceMs);
   }
 
   /**
-   * 刷新日志缓冲区
+   * 刷新输出（深度过滤 + 格式化）
    */
-  flushLog() {
-    if (!this.logBuffer) return;
+  flushOutput() {
+    if (!this.pendingOutput) return;
 
-    // 清理日志内容
-    let content = this.logBuffer
+    // 清除定时器
+    if (this.outputStableTimer) {
+      clearTimeout(this.outputStableTimer);
+      this.outputStableTimer = null;
+    }
+
+    // 清除状态行
+    if (this.statusLineActive) {
+      process.stdout.write('\r\x1b[K');
+      this.statusLineActive = false;
+    }
+
+    // 深度过滤内容
+    const content = this.deepFilterContent(this.pendingOutput);
+    this.pendingOutput = '';
+
+    if (!content) return;
+
+    // 输出格式化内容
+    this.printFormattedOutput(content);
+  }
+
+  /**
+   * 深度过滤内容
+   */
+  deepFilterContent(rawContent) {
+    // 基础清理
+    let content = rawContent
       .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+      .replace(/\r/g, '\n');
 
-    if (content) {
-      // 清除状态行
-      if (this.statusLineActive) {
-        process.stdout.write('\r\x1b[K');
-        this.statusLineActive = false;
+    // 按行处理
+    const lines = content.split('\n');
+    const filteredLines = [];
+    let prevLineEmpty = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // 跳过空行（但保留一个）
+      if (!trimmed) {
+        if (!prevLineEmpty) {
+          filteredLines.push('');
+          prevLineEmpty = true;
+        }
+        continue;
       }
+      prevLineEmpty = false;
 
-      // 过滤掉内容中的 thinking 动画帧
-      content = content
-        .replace(/[·✢✣✤✥✦✧★☆✶✷✸✹✺✻✼❂❃❄❅❆❇❈✽]+\s*\(thinking\)/gi, '')
-        .replace(/\(thinking\)/gi, '')
-        .replace(/;[⠁⠂⠃⠄⠅⠆⠇⡀⡁⡂⡃⡄⡅⡆⡇]?\s*Claude Code/gi, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
+      // 跳过 Claude UI 边框和装饰
+      if (this.isClaudeUIElement(trimmed)) continue;
 
-      if (content) {
-        // 直接打印内容，复刻终端效果
-        console.log('\x1b[90m' + '─'.repeat(60) + '\x1b[0m');
-        console.log(content);
-        console.log('\x1b[90m' + '─'.repeat(60) + '\x1b[0m');
+      // 跳过无意义的内容
+      if (this.isNoiseContent(trimmed)) continue;
+
+      // 清理行内的终端装饰
+      const cleanedLine = this.cleanLineDecorations(trimmed);
+      if (cleanedLine) {
+        filteredLines.push(cleanedLine);
       }
     }
 
-    this.logBuffer = '';
+    // 合并并清理
+    content = filteredLines.join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    return content;
+  }
+
+  /**
+   * 检测是否是 Claude UI 元素
+   */
+  isClaudeUIElement(line) {
+    // 边框字符
+    if (/^[╭╮╰╯│├┤┬┴┼─═]+$/.test(line)) return true;
+
+    // 边框行（包含大量边框字符）
+    if (/(╭|╮|╰|╯|│|─).*(╭|╮|╰|╯|│|─)/.test(line) && line.length > 40) return true;
+
+    // Claude Code 标题行
+    if (/╭─+Claude\s*Code/i.test(line)) return true;
+
+    // 纯分隔线
+    if (/^─{20,}$/.test(line)) return true;
+
+    // 内部装饰行
+    if (/^[│▐▛▜▝█▘]+$/.test(line)) return true;
+
+    // 状态栏
+    if (/glm-\d+.*API.*Usage/i.test(line)) return true;
+    if (/Recent\s*activity/i.test(line)) return true;
+
+    return false;
+  }
+
+  /**
+   * 检测是否是无意义内容
+   */
+  isNoiseContent(line) {
+    // Spinner 残留（扩展字符集）
+    if (/^[·✢✣✤✥✦✧★☆✶✷✸✹✺✻✼❂❃❄❅❆❇❈✽;⠁⠂⠃⠄⠅⠆⠇⡀⡁⡂⡃⡄⡅⡆⡇]+$/.test(line)) return true;
+
+    // Claude Code 状态行（如 ";⠂ Claude Code"）
+    if (/^[;·]?\s*[⠁⠂⠃⠄⠅⠆⠇⡀⡁⡂⡃⡄⡅⡆⡇]?\s*Claude\s*Code/i.test(line)) return true;
+
+    // Bootstrapping 动画
+    if (/^Bootstrapping\.{0,3}$/i.test(line)) return true;
+
+    // 状态动画残留
+    const noisePatterns = [
+      /^(Actioning|Perambulating|Initializing|Processing|Loading|Bootstrapping)\.{0,3}$/i,
+      /^\(thought for \d+s?\)$/i,
+      /^Successfully loaded skill$/i,
+      /^ctrl\+o to expand$/i,
+      /^for shortcuts$/i,
+      /^Try "refactor/i,
+      /^esctointer/i,
+      /^BubbleSort\.java 给这个冒泡程序增加单元测试代码/i, // 用户输入回显
+      /^Reading \d+ files?\.{0,3}$/i,
+      /^Recalling \d+ memories?\.{0,3}$/i,
+    ];
+
+    for (const pattern of noisePatterns) {
+      if (pattern.test(line)) return true;
+    }
+
+    // 极短的无意义行
+    if (line.length <= 2 && !/[a-zA-Z0-9\u4e00-\u9fa5]/.test(line)) return true;
+
+    // 零散的单词（可能是动画帧残留）
+    if (/^[a-z]{2,4}$/i.test(line) && !/^(ok|yes|no|go|run)$/i.test(line)) return true;
+
+    // 单个字母或数字
+    if (/^[a-zA-Z0-9]$/.test(line)) return true;
+
+    return false;
+  }
+
+  /**
+   * 清理行内装饰
+   */
+  cleanLineDecorations(line) {
+    return line
+      // 移除行首的 prompt 符号和路径
+      .replace(/^[❯›>$]\s*/, '')
+      // 移除行尾的状态动画
+      .replace(/\s*[·✢✣✤✥✦✧★☆✶✷✸✹✺✻✼❂❃❄❅❆❇❈✽]+\s*$/, '')
+      // 移除 (ctrl+o to expand) 等提示
+      .replace(/\s*\(ctrl\+o to expand\)\s*/gi, '')
+      // 移除 (thought for Xs)
+      .replace(/\s*\(thought for \d+s?\)\s*/gi, '')
+      // 清理多余空格
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * 格式化并打印输出
+   */
+  printFormattedOutput(content) {
+    const terminalWidth = 60;
+    const separator = '\x1b[90m' + '─'.repeat(terminalWidth) + '\x1b[0m';
+
+    // 检测内容类型
+    const lines = content.split('\n');
+    const hasCodeBlock = /```/.test(content);
+    const hasBulletPoints = /^[-*•]\s/m.test(content);
+    const hasNumberedList = /^\d+[.)]\s/m.test(content);
+
+    // 根据内容类型选择格式
+    if (hasCodeBlock) {
+      // 代码块：保持原格式
+      console.log(separator);
+      console.log(content);
+      console.log(separator);
+    } else if (hasBulletPoints || hasNumberedList) {
+      // 列表：保持原格式
+      console.log(separator);
+      console.log(content);
+      console.log(separator);
+    } else if (lines.length === 1) {
+      // 单行：紧凑显示
+      console.log(separator);
+      console.log(content);
+      console.log(separator);
+    } else {
+      // 多行：完整显示
+      console.log(separator);
+      console.log(content);
+      console.log(separator);
+    }
+  }
+
+  /**
+   * 刷新日志缓冲区（兼容旧调用）
+   */
+  flushLog() {
+    this.flushOutput();
   }
 
   /**
@@ -402,6 +675,13 @@ class OpenHermit {
       return;
     }
 
+    // 检测选项列表（需要用户选择）
+    const options = this.detectOptionsList(cleanData);
+    if (options && options.length > 0) {
+      // 发送选项列表到钉钉
+      this.sendOptionsToDingTalk(cleanData, options);
+    }
+
     // 检测任务是否完成（用于状态更新，但不主动推送）
     this.checkTaskCompletion(cleanData);
 
@@ -460,6 +740,85 @@ class OpenHermit {
     }
 
     return isCompleted;
+  }
+
+  /**
+   * 检测选项列表
+   * @param {string} data - PTY 输出数据
+   * @returns {array|null} 选项数组或 null
+   */
+  detectOptionsList(data) {
+    const lines = data.split('\n');
+    const options = [];
+
+    // 检测编号选项（1. xxx, 2. xxx 等）
+    const numberedPattern = /^\s*(\d+)[.)\]]\s*(.+)$/;
+
+    for (const line of lines) {
+      const match = line.match(numberedPattern);
+      if (match) {
+        const num = parseInt(match[1]);
+        const text = match[2].trim();
+        // 过滤太短的选项
+        if (text.length >= 2) {
+          options.push({ number: num, text: text });
+        }
+      }
+    }
+
+    // 如果有 2 个以上的选项，认为是有效的选项列表
+    if (options.length >= 2) {
+      // 检查是否是连续的编号
+      const numbers = options.map(o => o.number);
+      const isConsecutive = numbers.every((n, i) => i === 0 || n === numbers[i - 1] + 1 || n === numbers[i - 1]);
+      if (isConsecutive) {
+        return options;
+      }
+    }
+
+    // 检测 y/n 确认
+    if (/\(y\/n\)|\[y\/n\]/i.test(data)) {
+      return [{ type: 'confirm', text: '请确认' }];
+    }
+
+    return null;
+  }
+
+  /**
+   * 发送选项列表到钉钉
+   * @param {string} rawData - 原始数据
+   * @param {array} options - 选项数组
+   */
+  sendOptionsToDingTalk(rawData, options) {
+    // 更新状态
+    this.taskStatus.phase = 'waiting_input';
+
+    // 格式化消息
+    let msg = '## 🤔 请选择\n\n';
+
+    if (options[0].type === 'confirm') {
+      // y/n 确认
+      msg += '请回复 **y** (同意) 或 **n** (拒绝)';
+    } else {
+      // 编号选项
+      msg += '请回复对应的**数字**选择：\n\n';
+      for (const opt of options) {
+        msg += `${opt.number}. ${opt.text}\n`;
+      }
+    }
+
+    // 添加原始提示上下文（提取问题部分）
+    const questionMatch = rawData.match(/(.{0,100}\?.*?)(?=\d+\.)/s);
+    if (questionMatch) {
+      const context = questionMatch[1].trim();
+      if (context && context.length > 5) {
+        msg = `## 🤔 需要您的选择\n\n${context}\n\n` + msg;
+      }
+    }
+
+    // 发送到钉钉
+    this.channel.send(msg, { immediate: true, taskCompleted: false });
+    logger.info({ optionsCount: options.length }, '📤 已发送选项列表到钉钉');
   }
 
 
@@ -1009,15 +1368,15 @@ class OpenHermit {
       return;
     }
 
-    // 启动 Claude
+    // 启动 Claude（直接写入命令和回车，不使用延迟）
     if (args) {
       // 带任务描述
       const escaped = args.replace(/'/g, "'\\''");
-      this.writeCommand(`claude '${escaped}'`);
+      this.pty.write(`claude '${escaped}'\r`);
       this.channel.send(`🚀 启动 Claude Code: ${args}`, { immediate: true });
     } else {
       // 纯启动
-      this.writeCommand('claude');
+      this.pty.write('claude\r');
       this.channel.send('🚀 启动 Claude Code', { immediate: true });
     }
 

@@ -1,7 +1,12 @@
 # 🦀 OpenHermit (开源寄居蟹)
 
 > A Lightweight Remote PTY Bridge for Claude Code & Local AI Agents.
-> 让你的本地 AI 编程助手"长出"移动端的触角。
+    OpenHermit 不生产指令，只是跨越屏幕的指令搬运工。
+> 隐于后台，行于指尖。把最强的大脑搬进你的口袋，让你随时随地无感接管AI Coding 工作站。
+
+
+
+
 
 [![npm version](https://img.shields.io/npm/v/@codelogickeep/open-hermit.svg)](https://www.npmjs.com/package/@codelogickeep/open-hermit)
 [![npm downloads](https://img.shields.io/npm/dm/@codelogickeep/open-hermit.svg)](https://www.npmjs.com/package/@codelogickeep/open-hermit)
