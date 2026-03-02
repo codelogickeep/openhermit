@@ -111,17 +111,19 @@ describe('模拟钉钉消息流程测试', () => {
   });
 
   describe('场景6: HITL 检测和审批', () => {
-    it('应该检测 (y/n) 提示', async () => {
+    it('应该检测 (y/n) + 危险命令 提示', async () => {
       const { checkHitl } = await import('../src/purifier/hitl.js');
 
-      expect(checkHitl('Do you want to continue? (y/n)')).toBe(true);
-      expect(checkHitl('Continue? (Y/N)')).toBe(true);
+      expect(checkHitl('Run bash command? (y/n)')).toBe(true);
+      expect(checkHitl('Execute this command? (Y/N)')).toBe(true);
+      expect(checkHitl('Delete file? (y/n)')).toBe(true);
     });
 
     it('应该检测 Allow 提示', async () => {
       const { checkHitl } = await import('../src/purifier/hitl.js');
 
       expect(checkHitl('Allow this command?')).toBe(true);
+      expect(checkHitl('Allow execute operation?')).toBe(true);
     });
 
     it('应该拒绝非审批提示', async () => {
@@ -129,6 +131,8 @@ describe('模拟钉钉消息流程测试', () => {
 
       expect(checkHitl('Hello World')).toBe(false);
       expect(checkHitl('npm install completed')).toBe(false);
+      expect(checkHitl('Do you want to continue? (y/n)')).toBe(false);
+      expect(checkHitl('Proceed?')).toBe(false);
     });
   });
 

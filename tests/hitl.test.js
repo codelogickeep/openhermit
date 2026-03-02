@@ -3,39 +3,51 @@ import { checkHitl, extractHitlPrompt, getHitlOptions } from '../src/purifier/hi
 
 describe('hitl', () => {
   describe('checkHitl', () => {
-    it('应该检测 (y/n) 提示', () => {
-      expect(checkHitl('Do you want to continue? (y/n)')).toBe(true);
-      expect(checkHitl('Continue? (Y/N)')).toBe(true);
-      expect(checkHitl('Proceed? (yes/no)')).toBe(true);
+    it('应该检测 (y/n) + 危险命令 提示', () => {
+      expect(checkHitl('Run bash command? (y/n)')).toBe(true);
+      expect(checkHitl('Execute this command? (Y/N)')).toBe(true);
+      expect(checkHitl('Delete file? (y/n)')).toBe(true);
+      expect(checkHitl('Remove file? (Y/N)')).toBe(true);
     });
 
     it('应该检测 Allow 提示', () => {
-      expect(checkHitl('Allow this operation?')).toBe(true);
-      expect(checkHitl('Permission needed?')).toBe(true);
+      expect(checkHitl('Allow this bash command?')).toBe(true);
+      expect(checkHitl('Allow this command?')).toBe(true);
+      expect(checkHitl('Allow execute operation?')).toBe(true);
+      expect(checkHitl('Allow delete file?')).toBe(true);
     });
 
     it('应该检测命令执行确认', () => {
       expect(checkHitl('Run this command?')).toBe(true);
-      expect(checkHitl('Execute script?')).toBe(true);
+      expect(checkHitl('Execute this command?')).toBe(true);
     });
 
-    it('应该检测 Git 确认', () => {
-      expect(checkHitl('Commit changes?')).toBe(true);
-      expect(checkHitl('Push to remote?')).toBe(true);
+    it('应该检测文件操作确认', () => {
+      expect(checkHitl('Delete file?')).toBe(true);
+      expect(checkHitl('Remove file?')).toBe(true);
+      expect(checkHitl('Overwrite file?')).toBe(true);
     });
 
     it('应该拒绝非 HITL 文本', () => {
       expect(checkHitl('Hello World')).toBe(false);
       expect(checkHitl('The file has been saved')).toBe(false);
       expect(checkHitl('npm install completed')).toBe(false);
+      expect(checkHitl('Do you want to proceed?')).toBe(false);
+      expect(checkHitl('Continue?')).toBe(false);
+    });
+
+    it('应该拒绝普通选项选择（不是 HITL）', () => {
+      expect(checkHitl('Do you want to continue? (y/n)')).toBe(false);
+      expect(checkHitl('Proceed?')).toBe(false);
+      expect(checkHitl('Are you sure?')).toBe(false);
     });
   });
 
   describe('extractHitlPrompt', () => {
     it('应该提取 HITL 提示内容', () => {
-      const text = 'Some output before Do you want to continue? (y/n)';
+      const text = 'Some output before Run this command? (y/n)';
       const prompt = extractHitlPrompt(text);
-      expect(prompt).toContain('(y/n)');
+      expect(prompt).toBeTruthy();
     });
 
     it('应该返回 null 当没有 HITL 提示', () => {

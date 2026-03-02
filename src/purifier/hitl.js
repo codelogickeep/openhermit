@@ -1,50 +1,48 @@
 /**
  * HITL (Human-in-the-Loop) 检测器
- * 用于检测需要用户审批的交互提示
+ * 用于检测需要用户审批的危险命令交互提示
+ * 注意：只检测真正的危险命令审批，选项选择由 LLM 分析处理
  */
 
-// HITL 模式列表
+// HITL 模式列表 - 只检测危险命令审批
 const HITL_PATTERNS = [
-  // 是/否 提示
-  /\(y\/n\)/i,
-  /\(Y\/N\)/i,
-  /\(yes\/no\)/i,
-  /\(YES\/NO\)/i,
-  /\[y\/n\]/i,
-  /\[Y\/N\]/i,
-  /do you want to.*\?/i,
-  /are you sure.*\?/i,
-  /continue\?/i,
-  /proceed\?/i,
+  // Bash/Command 执行确认（带 y/n）- 任意顺序
+  /bash.*\(y\/n\)/i,
+  /\(y\/n\).*bash/i,
+  /command.*\(y\/n\)/i,
+  /\(y\/n\).*command/i,
+  /execute.*\(y\/n\)/i,
+  /\(y\/n\).*execute/i,
+  /delete.*\(y\/n\)/i,
+  /\(y\/n\).*delete/i,
+  /remove.*\(y\/n\)/i,
+  /\(y\/n\).*remove/i,
+  /rm.*\(y\/n\)/i,
+  /\(y\/n\).*rm/i,
 
-  // Allow/批准 提示
-  /allow.*\?/i,
-  /permission.*\?/i,
-  /authorize.*\?/i,
-  /approve.*\?/i,
+  // Allow/批准 提示（危险操作）
+  /allow.*bash.*\?/i,
+  /allow.*command.*\?/i,
+  /allow.*execute.*\?/i,
+  /allow.*delete.*\?/i,
+  /allow.*write.*\?/i,
+  /allow.*edit.*\?/i,
+  /allow.*remove.*\?/i,
 
-  // 命令执行确认
-  /run this command\?/i,
-  /execute.*\?/i,
-  /install.*\?/i,
-  /delete.*\?/i,
-  /remove.*\?/i,
+  // 特定的危险命令确认
+  /run.*command.*\?/i,
+  /execute.*command.*\?/i,
+  /delete.*file.*\?/i,
+  /remove.*file.*\?/i,
+  /force push\?/i,
 
-  // Git 确认
-  /commit.*\?/i,
-  /push.*\?/i,
-  /force push.*\?/i,
-  /merge.*\?/i,
+  // 文件操作确认
+  /overwrite.*\?/i,
+  /replace.*file.*\?/i,
 
-  // npm/yarn 确认
-  /install packages\?/i,
-  /update packages\?/i,
-  /remove packages\?/i,
-
-  // Docker 确认
-  /remove container\?/i,
-  /remove image\?/i,
-  /stop container\?/i
+  // Claude Code 特有的工具确认
+  /allow.*tool.*\?/i,
+  /use.*tool.*\?/i
 ];
 
 /**

@@ -43,7 +43,9 @@ describe('集成测试：模拟钉钉消息流程', () => {
 
     it('HITL 检测应该识别危险命令', async () => {
       const { checkHitl } = await import('../src/purifier/hitl.js');
-      expect(checkHitl('rm -rf /? (y/n)')).toBe(true);
+      expect(checkHitl('Run bash command? (y/n)')).toBe(true);
+      expect(checkHitl('Delete file? (y/n)')).toBe(true);
+      expect(checkHitl('Allow this command?')).toBe(true);
     });
   });
 
@@ -102,11 +104,11 @@ Total: 5 files`;
     it('模拟 HITL 检测流程', async () => {
       const { checkHitl } = await import('../src/purifier/hitl.js');
 
-      const output = `Running: npm install
-Installing packages...
-Do you want to continue? (y/n)`;
+      // 测试危险命令确认
+      const dangerousOutput = `Running: rm -rf /
+Delete this file? (y/n)`;
 
-      const isHitl = checkHitl(output);
+      const isHitl = checkHitl(dangerousOutput);
       expect(isHitl).toBe(true);
     });
 
