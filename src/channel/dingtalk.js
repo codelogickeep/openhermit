@@ -243,22 +243,32 @@ class DingTalkChannel extends EventEmitter {
     const preview = trimmed.length > 50 ? trimmed.slice(0, 50) + '...' : trimmed;
     logger.info({ text: preview, context, silentMode: this.silentMode }, '📤 send() 调用');
 
-    // 添加到缓冲区
+    // 检查是否需要立即发送
+    const shouldSend = this.shouldSendNow(text, context);
+    logger.info({ shouldSend, context }, '📋 shouldSendNow 结果');
+
+    // 立即发送模式：直接发送新消息，不影响缓冲区
+    if (shouldSend) {
+      logger.info({ text: preview }, '📤 触发立即发送（仅新消息）');
+      // 直接发送当前消息，不混入缓冲区
+      const chunks = this.splitChunks(text);
+      chunks.forEach((chunk, i) => {
+        logger.info({ index: i + 1, length: chunk.length, content: chunk }, '📤 立即发送消息');
+        if (this.mockMode) {
+          console.log(chunk);
+        } else {
+          this.sendToDingTalk(chunk);
+        }
+      });
+      return;
+    }
+
+    // 非立即发送：添加到缓冲区
     this.buffer += text;
 
     // 限制缓冲区大小
     if (this.buffer.length > this.maxBufferSize) {
       this.buffer = this.buffer.slice(-this.maxBufferSize);
-    }
-
-    // 检查是否需要立即发送
-    const shouldSend = this.shouldSendNow(text, context);
-    logger.info({ shouldSend, context }, '📋 shouldSendNow 结果');
-
-    if (shouldSend) {
-      logger.info({ text: preview }, '📤 触发立即发送');
-      this.doSend();
-      return;
     }
 
     // 静默模式：不实时发送，保留在缓冲区
@@ -324,10 +334,10 @@ class DingTalkChannel extends EventEmitter {
       return;
     }
 
-    const preview = text.length > 100 ? text.substring(0, 100) + '...' : text;
-    logger.info({ text: preview, length: text.length }, '📤 立即发送给钉钉');
+    logger.info({ length: text.length, content: text }, '📤 sendImmediate() 立即发送');
 
     if (this.mockMode) {
+      logger.info({ content: text }, '📤 [模拟模式] 立即发送');
       console.log(text);
       return;
     }
@@ -366,15 +376,20 @@ class DingTalkChannel extends EventEmitter {
     // 分片处理
     const chunks = this.splitChunks(text);
 
+    logger.info({ chunks: chunks.length, totalLength: text.length }, '📤 doSend() 执行发送');
+
     if (this.mockMode) {
-      chunks.forEach(chunk => {
-        logger.debug({ length: chunk.length }, '[模拟钉钉消息]');
+      chunks.forEach((chunk, i) => {
+        logger.info({ index: i + 1, length: chunk.length, content: chunk }, '📤 [模拟模式] 发送消息');
         console.log(chunk);
       });
       return;
     }
 
-    chunks.forEach(chunk => this.sendToDingTalk(chunk));
+    chunks.forEach((chunk, i) => {
+      logger.info({ index: i + 1, length: chunk.length, content: chunk }, '📤 发送消息到钉钉');
+      this.sendToDingTalk(chunk);
+    });
   }
 
   /**
@@ -439,6 +454,12 @@ class DingTalkChannel extends EventEmitter {
       const axios = (await import('axios')).default;
       const accessToken = await this.getAccessToken();
 
+      logger.info({
+        hasSessionWebhook: !!this.sessionWebhook,
+        textLength: text.length,
+        textPreview: text.substring(0, 100) + (text.length > 100 ? '...' : '')
+      }, '📤 sendToDingTalk() 准备发送');
+
       // 优先使用 sessionWebhook 被动回复
       if (this.sessionWebhook) {
         try {
@@ -452,20 +473,24 @@ class DingTalkChannel extends EventEmitter {
             }
           };
 
-          await axios({
+          logger.info({ url: this.sessionWebhook }, '📤 使用 sessionWebhook 发送');
+
+          const response = await axios({
             url: this.sessionWebhook,
             method: 'POST',
             data: body,
             headers: { 'x-acs-dingtalk-access-token': accessToken }
           });
 
+          logger.info({ status: response.status, data: response.data }, '✅ sessionWebhook 发送成功');
           return;
         } catch (webhookError) {
-          logger.warn({ error: webhookError.message }, 'sessionWebhook 发送失败，尝试降级推送');
+          logger.warn({ error: webhookError.message, response: webhookError.response?.data }, 'sessionWebhook 发送失败，尝试降级推送');
         }
       }
 
       // 降级：使用 batchSend 主动推送
+      logger.info('📤 降级使用 batchSend 发送');
       await this.batchSend(text, accessToken);
 
     } catch (error) {
@@ -497,7 +522,8 @@ class DingTalkChannel extends EventEmitter {
     };
 
     try {
-      await axios.post(
+      logger.info({ userId, robotCode, textLength: text.length }, '📤 batchSend 发送请求');
+      const response = await axios.post(
         'https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend',
         body,
         {
@@ -507,6 +533,7 @@ class DingTalkChannel extends EventEmitter {
           }
         }
       );
+      logger.info({ status: response.status, data: response.data }, '✅ batchSend 发送成功');
     } catch (error) {
       logger.error({ error: error.response?.data || error.message }, 'batchSend 发送失败');
     }
@@ -612,7 +639,7 @@ ${dirList}
       msg += `❌ 无法读取目录: ${error.message}`;
     }
 
-    this.send(msg);
+    this.send(msg, { immediate: true });
   }
 
   /**

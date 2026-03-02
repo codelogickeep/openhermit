@@ -118,9 +118,117 @@ class OpenHermit {
       maxSize: 10000  // 最大缓冲区大小
     };
 
+    // 日志输出控制
+    this.logBuffer = '';           // 日志缓冲区
+    this.logTimer = null;          // 日志定时器
+    this.lastLogState = '';        // 上次日志状态（用于检测状态变化）
+    this.logDebounceMs = 300;      // 日志防抖时间（毫秒）
+    this.statusLineActive = false; // 状态行是否激活
+
     if (this.smartMode) {
       logger.info('智能交互模式已启用');
     }
+  }
+
+  /**
+   * 智能日志输出
+   * - 合并短时间内的输出
+   * - 过滤重复的状态动画
+   * - 复刻终端显示效果
+   */
+  smartLog(data) {
+    if (!data) return;
+
+    // 清理 ANSI 转义序列
+    const cleanData = data
+      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+      .replace(/\x1b\].*?\x07/g, '');
+
+    // 检测是否是纯状态动画或单字符
+    const isThinking = /\(thinking\)/.test(cleanData);
+    const isSpinner = /^[·✢✣✤✥✦✧★☆✶✷✸✹✺✻✼❂❃❄❅❆❇❈✽✻✼]+$/.test(cleanData.trim());
+    const isClaudeStatus = /;[⠁⠂⠃⠄⠅⠆⠇⡀⡁⡂⡃⡄⡅⡆⡇]?\s*Claude Code/.test(cleanData);
+    const isSingleChar = cleanData.trim().length <= 2 && !/[a-zA-Z0-9\u4e00-\u9fa5]{2,}/.test(cleanData);
+    const isPureWhitespace = /^[\s\r\n]+$/.test(cleanData);
+
+    // 状态动画：只更新状态行，不打印日志
+    if (isThinking || isSpinner || isClaudeStatus || (isSingleChar && !isPureWhitespace)) {
+      if (!this.statusLineActive) {
+        this.statusLineActive = true;
+        // 使用 \r 覆盖当前行
+        process.stdout.write('\r\x1b[K\x1b[36m⏳ Claude 正在处理...\x1b[0m');
+      }
+      return;
+    }
+
+    // 纯空白：忽略
+    if (isPureWhitespace) return;
+
+    // 有实际内容：添加到缓冲区
+    this.logBuffer += cleanData;
+
+    // 清除之前的定时器
+    if (this.logTimer) {
+      clearTimeout(this.logTimer);
+    }
+
+    // 防抖输出
+    this.logTimer = setTimeout(() => {
+      this.flushLog();
+    }, this.logDebounceMs);
+  }
+
+  /**
+   * 刷新日志缓冲区
+   */
+  flushLog() {
+    if (!this.logBuffer) return;
+
+    // 清理日志内容
+    let content = this.logBuffer
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    if (content) {
+      // 清除状态行
+      if (this.statusLineActive) {
+        process.stdout.write('\r\x1b[K');
+        this.statusLineActive = false;
+      }
+
+      // 过滤掉内容中的 thinking 动画帧
+      content = content
+        .replace(/[·✢✣✤✥✦✧★☆✶✷✸✹✺✻✼❂❃❄❅❆❇❈✽]+\s*\(thinking\)/gi, '')
+        .replace(/\(thinking\)/gi, '')
+        .replace(/;[⠁⠂⠃⠄⠅⠆⠇⡀⡁⡂⡃⡄⡅⡆⡇]?\s*Claude Code/gi, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+      if (content) {
+        // 直接打印内容，复刻终端效果
+        console.log('\x1b[90m' + '─'.repeat(60) + '\x1b[0m');
+        console.log(content);
+        console.log('\x1b[90m' + '─'.repeat(60) + '\x1b[0m');
+      }
+    }
+
+    this.logBuffer = '';
+  }
+
+  /**
+   * 写入命令到 PTY（延后写入回车）
+   * @param {string} command - 要写入的命令
+   * @param {number} delay - 延迟时间（毫秒），默认 150ms
+   */
+  writeCommand(command, delay = 150) {
+    // 先写入命令文本
+    this.pty.write(command);
+    // 延迟后写入回车
+    setTimeout(() => {
+      this.pty.write('\r');
+    }, delay);
   }
 
   /**
@@ -263,8 +371,8 @@ class OpenHermit {
 
     if (!cleanData) return;
 
-    // 记录终端输出到日志（完整输出）
-    logger.info({ output: cleanData, length: cleanData.length }, '📺 终端输出');
+    // 智能日志输出（合并、过滤、防抖）
+    this.smartLog(cleanData);
 
     // 保存到终端缓冲区（用于 LLM 上下文分析）
     this.terminalBuffer += cleanData;
@@ -377,7 +485,7 @@ class OpenHermit {
         return;
       }
       // 其他文本提示用户先处理审批
-      this.channel.send('⚠️ 当前有待审批的操作，请先回复 y(同意) 或 n(拒绝)');
+      this.channel.send('⚠️ 当前有待审批的操作，请先回复 y(同意) 或 n(拒绝)', { immediate: true });
       return;
     }
 
@@ -387,15 +495,63 @@ class OpenHermit {
       return;
     }
 
+    // Bash 命令（! 前缀）- 在工作目录中执行
+    if (trimmed.startsWith('!')) {
+      this.handleBashCommand(trimmed.slice(1).trim());
+      return;
+    }
+
     // 其他所有内容：转发给 Claude 终端
     const session = this.intentParser.getSession();
     if (session.mode === 'claude_active') {
-      // Claude 已启动：原封不动转发
-      this.pty.write(trimmed + '\r');
+      // Claude 已启动：先写入命令，延后写入回车
+      this.writeCommand(trimmed);
     } else {
       // Claude 未启动：提示错误
-      this.channel.send(`⚠️ Claude 终端未启动\n\n使用 \`-claude\` 启动，或发送 \`-help\` 查看帮助`);
+      this.channel.send(`⚠️ Claude 终端未启动\n\n使用 \`-claude\` 启动，或发送 \`-help\` 查看帮助`, { immediate: true });
     }
+  }
+
+  /**
+   * 处理 Bash 命令（! 前缀）
+   * @param {string} command - 要执行的命令
+   */
+  handleBashCommand(command) {
+    if (!command) {
+      this.channel.send('用法: `!<命令>` - 在工作目录中执行 bash 命令', { immediate: true });
+      return;
+    }
+
+    const { exec } = require('child_process');
+    const workingDir = this.pty.getWorkingDir();
+
+    logger.info({ command, workingDir }, '执行 Bash 命令');
+
+    exec(command, { cwd: workingDir, timeout: 30000 }, (error, stdout, stderr) => {
+      if (error) {
+        this.channel.send(`❌ 命令执行失败:\n\`\`\`\n${error.message}\n\`\`\``, { immediate: true });
+        return;
+      }
+
+      let result = '';
+      if (stdout) {
+        result += stdout;
+      }
+      if (stderr) {
+        result += `\n[stderr]\n${stderr}`;
+      }
+
+      if (!result.trim()) {
+        result = '(命令执行成功，无输出)';
+      }
+
+      // 限制输出长度
+      if (result.length > 3000) {
+        result = result.slice(0, 3000) + '\n... (输出已截断)';
+      }
+
+      this.channel.send(`## 💻 命令结果\n\n\`\`\`bash\n$ ${command}\n\`\`\`\n\n\`\`\`\n${result}\n\`\`\``, { immediate: true });
+    });
   }
 
   /**
@@ -417,7 +573,7 @@ class OpenHermit {
         if (intent.type === IntentTypes.SHELL_COMMAND) {
           logger.info({ command: intent.command }, '执行 shell 命令');
           // 不推送执行确认，直接执行
-          this.pty.write(intent.command + '\r');
+          this.writeCommand(intent.command);
           return;
         }
 
@@ -431,11 +587,11 @@ class OpenHermit {
       } catch (error) {
         logger.error({ error: error.message }, '意图解析失败');
         // 降级：直接写入 PTY
-        this.pty.write(userMessage + '\r');
+        this.writeCommand(userMessage);
       }
     } else {
       // 非智能模式：直接写入 PTY
-      this.pty.write(userMessage + '\r');
+      this.writeCommand(userMessage);
     }
   }
 
@@ -574,7 +730,7 @@ class OpenHermit {
       if (intent.type === IntentTypes.SHELL_COMMAND) {
         logger.info({ command: intent.command }, '执行 shell 命令');
         this.channel.send(`🔧 执行命令: ${intent.command}`);
-        this.pty.write(intent.command + '\r');
+        this.writeCommand(intent.command);
         return;
       }
 
@@ -615,17 +771,17 @@ class OpenHermit {
           logger.info('✅ 已发送回车（选择默认选项）');
         } else {
           // 数字选择或确认：直接输入值
-          this.pty.write(result.action.value + '\r');
+          this.writeCommand(result.action.value);
           logger.info({ value: result.action.value }, '✅ 已写入终端');
         }
       } else {
         // 没有明确的 action，直接写入终端
-        this.pty.write(userMessage + '\r');
+        this.writeCommand(userMessage);
       }
     } catch (error) {
       logger.error({ error: error.message }, 'LLM 上下文处理失败');
       // 降级：直接写入终端
-      this.pty.write(userMessage + '\r');
+      this.writeCommand(userMessage);
     }
   }
 
@@ -648,7 +804,7 @@ class OpenHermit {
           // 直接执行 shell 命令
           logger.info({ command: intent.command }, '执行 shell 命令');
           this.channel.send(`🔧 执行命令: ${intent.command}`);
-          this.pty.write(intent.command + '\r');
+          this.writeCommand(intent.command);
           break;
 
         case IntentTypes.CLAUDE_COMMAND:
@@ -663,12 +819,12 @@ class OpenHermit {
 
         default:
           // 默认：写入 PTY
-          this.pty.write(userMessage + '\r');
+          this.writeCommand(userMessage);
       }
     } catch (error) {
       logger.error({ error: error.message }, '意图解析失败');
       // 降级：直接写入 PTY
-      this.pty.write(userMessage + '\r');
+      this.writeCommand(userMessage);
     }
   }
 
@@ -695,11 +851,11 @@ class OpenHermit {
         claudeCmd = `claude '${escaped}'`;
       }
 
-      this.pty.write(claudeCmd + '\r');
+      this.writeCommand(claudeCmd);
       session.setMode('claude_active');
     } else {
       // 已在 Claude 会话中，直接发送消息
-      this.pty.write(command + '\r');
+      this.writeCommand(command);
     }
   }
 
@@ -712,7 +868,7 @@ class OpenHermit {
 
     if (intent.command === 'confirm') {
       // y/n 确认
-      this.pty.write(intent.params.value + '\r');
+      this.writeCommand(intent.params.value);
       // 清除等待选择状态（如果有）
       if (this.waitingForSelection) {
         this.waitingForSelection = false;
@@ -743,7 +899,7 @@ class OpenHermit {
     }
 
     // 其他对话：直接发送
-    this.pty.write(intent.command + '\r');
+    this.writeCommand(intent.command);
   }
 
   /**
@@ -772,7 +928,7 @@ class OpenHermit {
         this.handleHelp();
         break;
       default:
-        this.channel.send(`❌ 未知命令: \`-${cmd}\`\n\n使用 \`-help\` 查看可用命令。`);
+        this.channel.send(`❌ 未知命令: \`-${cmd}\`\n\n使用 \`-help\` 查看可用命令。`, { immediate: true });
     }
   }
 
@@ -795,11 +951,17 @@ class OpenHermit {
 | \`-status\` | 查看执行状态 |
 | \`-help\` | 查看帮助 |
 
+### 💻 Bash 命令
+| 命令 | 说明 |
+|------|------|
+| \`!<命令>\` | 在工作目录执行 bash 命令 |
+
 ### 💡 使用说明
 - 带 \`-\` 前缀的命令由 OpenHermit 处理
+- 带 \`!\` 前缀的命令在工作目录执行 bash
 - 其他所有内容直接发送给 Claude 终端`;
 
-    this.channel.send(msg);
+    this.channel.send(msg, { immediate: true });
   }
 
   /**
@@ -808,7 +970,7 @@ class OpenHermit {
    */
   handleCd(path) {
     if (!path) {
-      this.channel.send('用法: `-cd <目录路径>`');
+      this.channel.send('用法: `-cd <目录路径>`', { immediate: true });
       return;
     }
 
@@ -821,10 +983,10 @@ class OpenHermit {
     const success = this.pty.setWorkingDir(targetPath);
 
     if (success) {
-      this.channel.send(`✅ 已切换到: \`${this.pty.getWorkingDir()}\``);
+      this.channel.send(`✅ 已切换到: \`${this.pty.getWorkingDir()}\``, { immediate: true });
     } else {
       const rootDir = getAllowedRootDir();
-      this.channel.send(`❌ 切换失败: 仅允许在 \`${rootDir}\` 下操作`);
+      this.channel.send(`❌ 切换失败: 仅允许在 \`${rootDir}\` 下操作`, { immediate: true });
     }
   }
 
@@ -851,11 +1013,11 @@ class OpenHermit {
     if (args) {
       // 带任务描述
       const escaped = args.replace(/'/g, "'\\''");
-      this.pty.write(`claude '${escaped}'\r`);
+      this.writeCommand(`claude '${escaped}'`);
       this.channel.send(`🚀 启动 Claude Code: ${args}`, { immediate: true });
     } else {
       // 纯启动
-      this.pty.write('claude\r');
+      this.writeCommand('claude');
       this.channel.send('🚀 启动 Claude Code', { immediate: true });
     }
 
@@ -912,7 +1074,7 @@ class OpenHermit {
     this.channel.send('\n✅ 已批准，继续执行...\n');
 
     // 写入 y 到 PTY
-    this.pty.write('y\r');
+    this.writeCommand('y');
 
     // 清空缓冲区
     this.pausedBuffer = '';
@@ -931,7 +1093,7 @@ class OpenHermit {
     this.channel.send('\n❌ 已拒绝，命令未执行\n');
 
     // 写入 n 到 PTY
-    this.pty.write('n\r');
+    this.writeCommand('n');
 
     // 清空缓冲区
     this.pausedBuffer = '';
