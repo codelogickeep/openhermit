@@ -29,8 +29,11 @@ export function filterControlChars(data) {
   // 过滤独立的回车符（不跟着换行符的 \r）
   result = result.replace(/\r(?!\n)/g, '');
 
-  // 过滤 ANSI 光标控制序列
+  // 过滤 ANSI 光标控制序列（完整的，带 ESC 前缀）
   result = result.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+
+  // 过滤残留的 CSI 序列（ESC 被过滤后留下的部分，如 [27m, [0m 等）
+  result = result.replace(/\[[0-9;]*[A-Za-z]/g, '');
 
   return result;
 }

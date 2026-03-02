@@ -45,6 +45,24 @@ describe('stripper', () => {
       const output = filterControlChars(input);
       expect(output).not.toContain('\r');
     });
+
+    it('应该过滤残留的 CSI 序列（如 [27m）', () => {
+      const input = 'text[27mmore text';
+      const output = filterControlChars(input);
+      expect(output).toBe('textmore text');
+    });
+
+    it('应该过滤残留的多种 CSI 序列', () => {
+      const input = '[0m[1m[32m[27mtext';
+      const output = filterControlChars(input);
+      expect(output).toBe('text');
+    });
+
+    it('应该保留正常的方括号内容', () => {
+      const input = 'list[1] item[2]';
+      const output = filterControlChars(input);
+      expect(output).toBe('list[1] item[2]');
+    });
   });
 
   describe('filterLoadingAnimations', () => {
