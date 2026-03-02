@@ -58,7 +58,7 @@ const { default: logger } = await import('./utils/logger.js');
 const { getIntentParser, IntentTypes } = await import('./intent/index.js');
 const { getMarkdownFormatter } = await import('./formatter/index.js');
 const { getSelectionDetector, getSelectionHandler } = await import('./selector/index.js');
-const { getLLMClient } = await import('./llm/index.js');
+const { getLLMClient, getInteractionAnalyzer, getInteractionContext } = await import('./llm/index.js');
 
 // 全局异常处理
 process.on('unhandledRejection', (reason, promise) => {
@@ -94,6 +94,8 @@ class OpenHermit {
     this.selectionDetector = getSelectionDetector();
     this.selectionHandler = getSelectionHandler();
     this.llmClient = getLLMClient();
+    this.interactionAnalyzer = getInteractionAnalyzer();
+    this.interactionContext = getInteractionContext();
     this.smartMode = !!getDashScopeApiKey(); // 智能模式：是否启用了 LLM
 
     // 终端输出缓冲区（用于 LLM 上下文分析）
@@ -118,377 +120,14 @@ class OpenHermit {
       maxSize: 10000  // 最大缓冲区大小
     };
 
-    // 日志输出控制（重新设计）
-    this.logBuffer = '';           // 日志缓冲区
-    this.logTimer = null;          // 日志定时器
-    this.logDebounceMs = 1500;     // 日志防抖时间（毫秒）
-    this.statusLineActive = false; // 状态行是否激活
-    this.lineBuffer = [];          // 行缓冲区（用于智能合并）
-    this.lastOutputTime = 0;       // 上次输出时间
-    this.inClaudeUI = false;       // 是否在 Claude UI 中
-    this.pendingOutput = '';       // 待处理的输出
-    this.outputStableTimer = null; // 输出稳定检测定时器
+    // 选项检测相关
+    this.lastSentOptionsKey = null;  // 上次发送的选项的 JSON key（避免重复发送）
 
     if (this.smartMode) {
       logger.info('智能交互模式已启用');
     }
   }
 
-  /**
-   * 智能日志输出（重新设计）
-   * 核心策略：
-   * 1. 检测输出结束标志（prompt 符号）
-   * 2. 深度过滤终端 UI 元素
-   * 3. 合并短时间内的输出
-   */
-  smartLog(data) {
-    if (!data) return;
-
-    // 第一步：深度清理 ANSI 和终端控制字符
-    const cleanData = this.deepCleanAnsi(data);
-
-    // 第二步：检测是否应该跳过（动画帧、状态更新等）
-    if (this.shouldSkipOutput(cleanData)) {
-      this.updateStatusLine(cleanData);
-      return;
-    }
-
-    // 第三步：添加到待处理缓冲区
-    this.pendingOutput += cleanData;
-
-    // 第四步：检测输出结束标志
-    if (this.detectOutputEnd(cleanData)) {
-      // 输出结束，立即刷新
-      this.flushOutput();
-      return;
-    }
-
-    // 第五步：防抖等待更多数据
-    this.scheduleFlush();
-  }
-
-  /**
-   * 深度清理 ANSI 转义序列
-   */
-  deepCleanAnsi(data) {
-    return data
-      // 标准 ANSI CSI 序列
-      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-      // OSC 序列（标题、剪贴板等）
-      .replace(/\x1b\].*?\x07/g, '')
-      // 字符集选择
-      .replace(/\x1b\([a-zA-Z0-9]/g, '')
-      .replace(/\x1b[()][a-zA-Z0-9]/g, '')
-      // 残留的 CSI 序列（无 ESC 前缀）
-      .replace(/\[[0-9;]*[a-zA-Z]/g, '')
-      // 其他控制序列
-      .replace(/\x1b[=?].*?[a-zA-Z]/g, '')
-      // SGR 参数残留
-      .replace(/\x1b\[[\d;]*m/g, '');
-  }
-
-  /**
-   * 检测是否应该跳过输出
-   */
-  shouldSkipOutput(data) {
-    const trimmed = data.trim();
-
-    // 空白
-    if (!trimmed || /^[\s\r\n]+$/.test(data)) return true;
-
-    // Spinner 动画字符
-    const spinnerChars = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏','⠎','⠜','⠷','⠯','⠿',
-                          '⠁','⠂','⠃','⠄','⠅','⠆','⠇','⡀','⡁','⡂','⡃','⡄','⡅','⡆','⡇'];
-    if (spinnerChars.some(c => trimmed === c)) return true;
-
-    // 纯 spinner 组合
-    if (/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠎⠜⠷⠯⠿⠁⠂⠃⠄⠅⠆⠇⡀⡁⡂⡃⡄⡅⡆⡇·✢✣✤✥✦✧★☆✶✷✸✹✺✻✼❂❃❄❅❆❇❈✽]+$/.test(trimmed)) return true;
-
-    // 状态动画关键词
-    const statusKeywords = [
-      'thinking', 'actioning', 'perambulating', 'initializing',
-      'processing', 'loading', 'please wait'
-    ];
-    const lowerData = trimmed.toLowerCase();
-    if (statusKeywords.some(k => lowerData.includes(k)) && trimmed.length < 30) return true;
-
-    // 单字符且非字母数字中文
-    if (trimmed.length === 1 && !/[a-zA-Z0-9\u4e00-\u9fa5]/.test(trimmed)) return true;
-
-    // 2字符且全是符号
-    if (trimmed.length === 2 && /^[^\w\u4e00-\u9fa5]+$/.test(trimmed)) return true;
-
-    return false;
-  }
-
-  /**
-   * 更新状态行
-   */
-  updateStatusLine(data) {
-    const statusTexts = {
-      'thinking': '⏳ 思考中...',
-      'actioning': '⚡ 执行中...',
-      'perambulating': '🔄 处理中...',
-      'initializing': '🚀 初始化...',
-      'processing': '⏳ 处理中...',
-      'loading': '📥 加载中...'
-    };
-
-    const lowerData = data.toLowerCase();
-    for (const [key, text] of Object.entries(statusTexts)) {
-      if (lowerData.includes(key)) {
-        if (!this.statusLineActive || this.currentStatusText !== text) {
-          this.statusLineActive = true;
-          this.currentStatusText = text;
-          process.stdout.write(`\r\x1b[K\x1b[36m${text}\x1b[0m`);
-        }
-        return;
-      }
-    }
-
-    // 默认状态
-    if (!this.statusLineActive) {
-      this.statusLineActive = true;
-      process.stdout.write('\r\x1b[K\x1b[36m⏳ Claude 正在处理...\x1b[0m');
-    }
-  }
-
-  /**
-   * 检测输出结束标志
-   */
-  detectOutputEnd(data) {
-    // 检测 prompt 符号（Claude 已完成输出）
-    if (/❯\s*$/.test(data) || /\$\s*$/.test(data)) {
-      return true;
-    }
-
-    // 检测用户输入回显（用户开始输入）
-    if (/❯\s+\S/.test(data)) {
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * 安排刷新
-   */
-  scheduleFlush() {
-    if (this.outputStableTimer) {
-      clearTimeout(this.outputStableTimer);
-    }
-
-    this.outputStableTimer = setTimeout(() => {
-      this.flushOutput();
-    }, this.logDebounceMs);
-  }
-
-  /**
-   * 刷新输出（深度过滤 + 格式化）
-   */
-  flushOutput() {
-    if (!this.pendingOutput) return;
-
-    // 清除定时器
-    if (this.outputStableTimer) {
-      clearTimeout(this.outputStableTimer);
-      this.outputStableTimer = null;
-    }
-
-    // 清除状态行
-    if (this.statusLineActive) {
-      process.stdout.write('\r\x1b[K');
-      this.statusLineActive = false;
-    }
-
-    // 深度过滤内容
-    const content = this.deepFilterContent(this.pendingOutput);
-    this.pendingOutput = '';
-
-    if (!content) return;
-
-    // 输出格式化内容
-    this.printFormattedOutput(content);
-  }
-
-  /**
-   * 深度过滤内容
-   */
-  deepFilterContent(rawContent) {
-    // 基础清理
-    let content = rawContent
-      .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n');
-
-    // 按行处理
-    const lines = content.split('\n');
-    const filteredLines = [];
-    let prevLineEmpty = false;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      // 跳过空行（但保留一个）
-      if (!trimmed) {
-        if (!prevLineEmpty) {
-          filteredLines.push('');
-          prevLineEmpty = true;
-        }
-        continue;
-      }
-      prevLineEmpty = false;
-
-      // 跳过 Claude UI 边框和装饰
-      if (this.isClaudeUIElement(trimmed)) continue;
-
-      // 跳过无意义的内容
-      if (this.isNoiseContent(trimmed)) continue;
-
-      // 清理行内的终端装饰
-      const cleanedLine = this.cleanLineDecorations(trimmed);
-      if (cleanedLine) {
-        filteredLines.push(cleanedLine);
-      }
-    }
-
-    // 合并并清理
-    content = filteredLines.join('\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-
-    return content;
-  }
-
-  /**
-   * 检测是否是 Claude UI 元素
-   */
-  isClaudeUIElement(line) {
-    // 边框字符
-    if (/^[╭╮╰╯│├┤┬┴┼─═]+$/.test(line)) return true;
-
-    // 边框行（包含大量边框字符）
-    if (/(╭|╮|╰|╯|│|─).*(╭|╮|╰|╯|│|─)/.test(line) && line.length > 40) return true;
-
-    // Claude Code 标题行
-    if (/╭─+Claude\s*Code/i.test(line)) return true;
-
-    // 纯分隔线
-    if (/^─{20,}$/.test(line)) return true;
-
-    // 内部装饰行
-    if (/^[│▐▛▜▝█▘]+$/.test(line)) return true;
-
-    // 状态栏
-    if (/glm-\d+.*API.*Usage/i.test(line)) return true;
-    if (/Recent\s*activity/i.test(line)) return true;
-
-    return false;
-  }
-
-  /**
-   * 检测是否是无意义内容
-   */
-  isNoiseContent(line) {
-    // Spinner 残留（扩展字符集）
-    if (/^[·✢✣✤✥✦✧★☆✶✷✸✹✺✻✼❂❃❄❅❆❇❈✽;⠁⠂⠃⠄⠅⠆⠇⡀⡁⡂⡃⡄⡅⡆⡇]+$/.test(line)) return true;
-
-    // Claude Code 状态行（如 ";⠂ Claude Code"）
-    if (/^[;·]?\s*[⠁⠂⠃⠄⠅⠆⠇⡀⡁⡂⡃⡄⡅⡆⡇]?\s*Claude\s*Code/i.test(line)) return true;
-
-    // Bootstrapping 动画
-    if (/^Bootstrapping\.{0,3}$/i.test(line)) return true;
-
-    // 状态动画残留
-    const noisePatterns = [
-      /^(Actioning|Perambulating|Initializing|Processing|Loading|Bootstrapping)\.{0,3}$/i,
-      /^\(thought for \d+s?\)$/i,
-      /^Successfully loaded skill$/i,
-      /^ctrl\+o to expand$/i,
-      /^for shortcuts$/i,
-      /^Try "refactor/i,
-      /^esctointer/i,
-      /^BubbleSort\.java 给这个冒泡程序增加单元测试代码/i, // 用户输入回显
-      /^Reading \d+ files?\.{0,3}$/i,
-      /^Recalling \d+ memories?\.{0,3}$/i,
-    ];
-
-    for (const pattern of noisePatterns) {
-      if (pattern.test(line)) return true;
-    }
-
-    // 极短的无意义行
-    if (line.length <= 2 && !/[a-zA-Z0-9\u4e00-\u9fa5]/.test(line)) return true;
-
-    // 零散的单词（可能是动画帧残留）
-    if (/^[a-z]{2,4}$/i.test(line) && !/^(ok|yes|no|go|run)$/i.test(line)) return true;
-
-    // 单个字母或数字
-    if (/^[a-zA-Z0-9]$/.test(line)) return true;
-
-    return false;
-  }
-
-  /**
-   * 清理行内装饰
-   */
-  cleanLineDecorations(line) {
-    return line
-      // 移除行首的 prompt 符号和路径
-      .replace(/^[❯›>$]\s*/, '')
-      // 移除行尾的状态动画
-      .replace(/\s*[·✢✣✤✥✦✧★☆✶✷✸✹✺✻✼❂❃❄❅❆❇❈✽]+\s*$/, '')
-      // 移除 (ctrl+o to expand) 等提示
-      .replace(/\s*\(ctrl\+o to expand\)\s*/gi, '')
-      // 移除 (thought for Xs)
-      .replace(/\s*\(thought for \d+s?\)\s*/gi, '')
-      // 清理多余空格
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  /**
-   * 格式化并打印输出
-   */
-  printFormattedOutput(content) {
-    const terminalWidth = 60;
-    const separator = '\x1b[90m' + '─'.repeat(terminalWidth) + '\x1b[0m';
-
-    // 检测内容类型
-    const lines = content.split('\n');
-    const hasCodeBlock = /```/.test(content);
-    const hasBulletPoints = /^[-*•]\s/m.test(content);
-    const hasNumberedList = /^\d+[.)]\s/m.test(content);
-
-    // 根据内容类型选择格式
-    if (hasCodeBlock) {
-      // 代码块：保持原格式
-      console.log(separator);
-      console.log(content);
-      console.log(separator);
-    } else if (hasBulletPoints || hasNumberedList) {
-      // 列表：保持原格式
-      console.log(separator);
-      console.log(content);
-      console.log(separator);
-    } else if (lines.length === 1) {
-      // 单行：紧凑显示
-      console.log(separator);
-      console.log(content);
-      console.log(separator);
-    } else {
-      // 多行：完整显示
-      console.log(separator);
-      console.log(content);
-      console.log(separator);
-    }
-  }
-
-  /**
-   * 刷新日志缓冲区（兼容旧调用）
-   */
-  flushLog() {
-    this.flushOutput();
-  }
 
   /**
    * 写入命令到 PTY（延后写入回车）
@@ -594,7 +233,7 @@ class OpenHermit {
    * @param {string} data - PTY 输出
    */
   handlePtyData(data) {
-    // 将数据加入队列
+    // 将数据加入队列进行处理
     this.ptyQueue.push(data);
 
     // 如果没有在处理，开始处理
@@ -604,7 +243,7 @@ class OpenHermit {
   }
 
   /**
-   * 处理 PTY 输出队列
+   * 处理 PTY 输出队列（钉钉通道）
    */
   async processPtyQueue() {
     if (this.ptyQueue.length === 0) {
@@ -619,7 +258,7 @@ class OpenHermit {
     this.ptyQueue = [];
 
     try {
-      await this.processPtyData(allData);
+      await this.processPtyDataForDingTalk(allData);
     } catch (error) {
       logger.error({ error: error.message }, '处理 PTY 数据失败');
     }
@@ -629,23 +268,29 @@ class OpenHermit {
   }
 
   /**
-   * 实际处理 PTY 数据
+   * 处理 PTY 数据（发送到钉钉通道）
+   * 使用净化和防抖机制
    * @param {string} data - PTY 输出
    */
-  async processPtyData(data) {
+  async processPtyDataForDingTalk(data) {
     // 如果处于 HITL 暂停状态，将数据存入缓冲区
     if (this.hitlActive) {
       this.pausedBuffer += data;
       return;
     }
 
-    // 净化数据
+    // 净化数据（去除 ANSI 码、控制字符、加载动画）
     const cleanData = purify(data);
 
-    if (!cleanData) return;
+    // 调试：直接打印净化后的数据
+    if (cleanData && cleanData.trim()) {
+      console.log(cleanData);
+    }
 
-    // 智能日志输出（合并、过滤、防抖）
-    this.smartLog(cleanData);
+    if (!cleanData || !cleanData.trim()) return;
+
+    // 本地终端输出：显示状态指示器
+    this.updateStatusIndicator(cleanData);
 
     // 保存到终端缓冲区（用于 LLM 上下文分析）
     this.terminalBuffer += cleanData;
@@ -675,11 +320,30 @@ class OpenHermit {
       return;
     }
 
-    // 检测选项列表（需要用户选择）
-    const options = this.detectOptionsList(cleanData);
-    if (options && options.length > 0) {
-      // 发送选项列表到钉钉
-      this.sendOptionsToDingTalk(cleanData, options);
+    // 检测交互提示
+    // 1. 先检测是否为标准交互（y/n 确认、Allow 确认、编号选项）
+    const standardSelection = this.selectionDetector.detect(this.terminalBuffer);
+    if (standardSelection && standardSelection.isStandard) {
+      // 标准交互：直接处理
+      const selectionKey = JSON.stringify(standardSelection);
+      if (this.lastSentOptionsKey !== selectionKey) {
+        logger.info({ type: standardSelection.type }, '📋 检测到标准交互');
+        this.lastSentOptionsKey = selectionKey;
+        this.sendSelectionToDingTalk(this.terminalBuffer, standardSelection);
+        this.printSelectionToLocalTerminal(standardSelection);
+      }
+    } else {
+      // 2. 非标准交互：使用 LLM 分析
+      // 检测是否有等待用户输入的特征
+      const hasInputPrompt = this.detectInputPrompt(cleanData);
+      if (hasInputPrompt && this.smartMode) {
+        const promptKey = this.terminalBuffer.slice(-200); // 用最后 200 字符作为 key
+        if (this.lastSentOptionsKey !== promptKey) {
+          this.lastSentOptionsKey = promptKey;
+          // 异步分析，不阻塞
+          this.handleNonStandardInteraction(this.terminalBuffer);
+        }
+      }
     }
 
     // 检测任务是否完成（用于状态更新，但不主动推送）
@@ -691,6 +355,116 @@ class OpenHermit {
     if (this.channel.buffer.length > this.channel.maxBufferSize) {
       this.channel.buffer = this.channel.buffer.slice(-this.channel.maxBufferSize);
     }
+  }
+
+  /**
+   * 检测是否有等待用户输入的特征
+   * @param {string} data - 净化后的数据
+   * @returns {boolean} 是否检测到输入提示
+   */
+  detectInputPrompt(data) {
+    // 检测常见的输入提示特征
+    const inputPatterns = [
+      /\?$/,
+      /请.*[输入描述]*/,
+      /what would you like/i,
+      /how can i help/i,
+      /continue\?/i,
+      /❯.*$/,
+    ];
+
+    return inputPatterns.some(p => p.test(data));
+  }
+
+  /**
+   * 处理非标准交互（使用 LLM 分析）
+   * @param {string} terminalOutput - 终端输出
+   */
+  async handleNonStandardInteraction(terminalOutput) {
+    try {
+      logger.info('🤖 使用 LLM 分析非标准交互');
+
+      // 使用 LLM 分析
+      const analysis = await this.interactionAnalyzer.analyze(terminalOutput);
+
+      // 保存上下文
+      const contextId = Date.now().toString();
+      this.interactionContext.setContext(contextId, analysis, terminalOutput);
+
+      // 生成消息
+      const message = this.interactionAnalyzer.formatMessage(analysis);
+
+      // 发送到钉钉
+      this.channel.send(message, { immediate: true, taskCompleted: false });
+
+      // 本地终端显示
+      console.log('\n\x1b[33m━━━ 需要您的操作 ━━━\x1b[0m');
+      console.log(`  \x1b[36m${analysis.context?.question || '等待输入...'}\x1b[0m`);
+      console.log('\x1b[33m━━━━━━━━━━━━━━━━━━━━\x1b[0m\n');
+
+      logger.info({ type: analysis.type, contextId }, '📤 发送 LLM 分析结果到钉钉');
+    } catch (error) {
+      logger.error({ error: error.message }, 'LLM 分析非标准交互失败');
+    }
+  }
+
+  /**
+   * 更新状态指示器（本地终端）
+   * 只显示简洁的状态信息，不显示原始 PTY 输出
+   * @param {string} data - 净化后的数据
+   */
+  updateStatusIndicator(data) {
+    const statusPatterns = [
+      { pattern: /thinking/i, text: '⏳ 思考中...' },
+      { pattern: /actioning/i, text: '⚡ 执行中...' },
+      { pattern: /perambulating/i, text: '🔄 处理中...' },
+      { pattern: /initializing/i, text: '🚀 初始化...' },
+      { pattern: /processing/i, text: '⏳ 处理中...' },
+      { pattern: /loading/i, text: '📥 加载中...' },
+    ];
+
+    for (const { pattern, text } of statusPatterns) {
+      if (pattern.test(data)) {
+        // 清除当前行并输出状态（不使用颜色，避免残留）
+        process.stdout.write(`\r${text}`);
+        return;
+      }
+    }
+  }
+
+  /**
+   * 在本地终端打印选择提示
+   * @param {object} selection - 选择信息（来自 SelectionDetector）
+   */
+  printSelectionToLocalTerminal(selection) {
+    // 清除状态行
+    process.stdout.write('\r\x1b[K');
+
+    // 打印选择提示
+    console.log('\n\x1b[33m━━━ 需要您的操作 ━━━\x1b[0m');
+
+    switch (selection.type) {
+      case 'confirm':
+        console.log(`  请回复 \x1b[32my\x1b[0m (同意) 或 \x1b[31mn\x1b[0m (拒绝)`);
+        break;
+
+      case 'text_input':
+        console.log(`  \x1b[36m等待您的输入...\x1b[0m`);
+        break;
+
+      case 'number':
+      case 'arrow':
+        for (const opt of selection.options) {
+          const marker = opt.isDefault ? ' \x1b[33m← 默认\x1b[0m' : '';
+          console.log(`  \x1b[36m${opt.index}.\x1b[0m ${opt.text}${marker}`);
+        }
+        break;
+
+      default:
+        console.log(`  等待中...`);
+    }
+
+    console.log('\x1b[33m━━━━━━━━━━━━━━━━━━━━\x1b[0m\n');
   }
 
   /**
@@ -736,6 +510,8 @@ class OpenHermit {
     if (isCompleted) {
       this.taskStatus.phase = 'completed';
       this.taskStatus.isRunning = false;
+      // 清除状态行，避免 ANSI 转义序列残留
+      process.stdout.write('\r\x1b[K\n');
       logger.info('任务完成检测：检测到完成标志');
     }
 
@@ -743,82 +519,46 @@ class OpenHermit {
   }
 
   /**
-   * 检测选项列表
-   * @param {string} data - PTY 输出数据
-   * @returns {array|null} 选项数组或 null
-   */
-  detectOptionsList(data) {
-    const lines = data.split('\n');
-    const options = [];
-
-    // 检测编号选项（1. xxx, 2. xxx 等）
-    const numberedPattern = /^\s*(\d+)[.)\]]\s*(.+)$/;
-
-    for (const line of lines) {
-      const match = line.match(numberedPattern);
-      if (match) {
-        const num = parseInt(match[1]);
-        const text = match[2].trim();
-        // 过滤太短的选项
-        if (text.length >= 2) {
-          options.push({ number: num, text: text });
-        }
-      }
-    }
-
-    // 如果有 2 个以上的选项，认为是有效的选项列表
-    if (options.length >= 2) {
-      // 检查是否是连续的编号
-      const numbers = options.map(o => o.number);
-      const isConsecutive = numbers.every((n, i) => i === 0 || n === numbers[i - 1] + 1 || n === numbers[i - 1]);
-      if (isConsecutive) {
-        return options;
-      }
-    }
-
-    // 检测 y/n 确认
-    if (/\(y\/n\)|\[y\/n\]/i.test(data)) {
-      return [{ type: 'confirm', text: '请确认' }];
-    }
-
-    return null;
-  }
-
-  /**
-   * 发送选项列表到钉钉
+   * 发送选择提示到钉钉
    * @param {string} rawData - 原始数据
-   * @param {array} options - 选项数组
+   * @param {object} selection - 选择信息（来自 SelectionDetector）
    */
-  sendOptionsToDingTalk(rawData, options) {
+  sendSelectionToDingTalk(rawData, selection) {
     // 更新状态
     this.taskStatus.phase = 'waiting_input';
 
     // 格式化消息
-    let msg = '## 🤔 请选择\n\n';
+    let msg = '';
 
-    if (options[0].type === 'confirm') {
-      // y/n 确认
-      msg += '请回复 **y** (同意) 或 **n** (拒绝)';
-    } else {
-      // 编号选项
-      msg += '请回复对应的**数字**选择：\n\n';
-      for (const opt of options) {
-        msg += `${opt.number}. ${opt.text}\n`;
-      }
-    }
+    switch (selection.type) {
+      case 'confirm':
+        msg = '## 🤔 请确认\n\n';
+        msg += '请回复 **y** (同意) 或 **n** (拒绝)';
+        break;
 
-    // 添加原始提示上下文（提取问题部分）
-    const questionMatch = rawData.match(/(.{0,100}\?.*?)(?=\d+\.)/s);
-    if (questionMatch) {
-      const context = questionMatch[1].trim();
-      if (context && context.length > 5) {
-        msg = `## 🤔 需要您的选择\n\n${context}\n\n` + msg;
-      }
+      case 'text_input':
+        msg = '## ✍️ 等待输入\n\n';
+        msg += 'Claude 正在等待您的输入。\n';
+        msg += '请直接回复您想执行的任务描述。';
+        break;
+
+      case 'number':
+      case 'arrow':
+        msg = '## 🤔 请选择\n\n';
+        msg += '请回复对应的**数字**选择：\n\n';
+        for (const opt of selection.options) {
+          const marker = opt.isDefault ? ' ← 默认' : '';
+          msg += `${opt.index}. ${opt.text}${marker}\n`;
+        }
+        break;
+
+      default:
+        msg = '## ⏳ 等待中\n\n';
+        msg += 'Claude 正在处理...';
     }
 
     // 发送到钉钉
     this.channel.send(msg, { immediate: true, taskCompleted: false });
-    logger.info({ optionsCount: options.length }, '📤 已发送选项列表到钉钉');
   }
 
 
@@ -863,11 +603,53 @@ class OpenHermit {
     // 其他所有内容：转发给 Claude 终端
     const session = this.intentParser.getSession();
     if (session.mode === 'claude_active') {
-      // Claude 已启动：先写入命令，延后写入回车
-      this.writeCommand(trimmed);
+      // 检查是否有交互上下文（非标准交互）
+      if (this.interactionContext.hasContext() && this.smartMode) {
+        // 有上下文，用 LLM 解析用户回复
+        this.handleContextualReply(trimmed);
+      } else {
+        // 无上下文，直接写入
+        this.writeCommand(trimmed);
+      }
     } else {
       // Claude 未启动：提示错误
       this.channel.send(`⚠️ Claude 终端未启动\n\n使用 \`-claude\` 启动，或发送 \`-help\` 查看帮助`, { immediate: true });
+    }
+  }
+
+  /**
+   * 处理带上下文的用户回复
+   * @param {string} userReply - 用户回复
+   */
+  async handleContextualReply(userReply) {
+    try {
+      logger.info('🤖 解析带上下文的用户回复');
+
+      // 用 LLM 解析
+      const result = await this.interactionAnalyzer.parseUserReply(userReply);
+
+      // 清除上下文
+      this.interactionContext.clearContext();
+
+      // 发送解析结果到 PTY
+      if (result.understood && result.input) {
+        logger.info({ input: result.input }, '✅ LLM 解析用户回复成功');
+        this.writeCommand(result.input);
+
+        // 可选：给用户反馈
+        if (result.feedback) {
+          this.channel.send(`💡 ${result.feedback}`, { immediate: true });
+        }
+      } else {
+        // 无法理解，直接发送原始输入
+        logger.warn('LLM 无法理解用户回复，使用原始输入');
+        this.writeCommand(userReply);
+      }
+    } catch (error) {
+      logger.error({ error: error.message }, '解析用户回复失败');
+      // 降级：直接发送原始输入
+      this.interactionContext.clearContext();
+      this.writeCommand(userReply);
     }
   }
 

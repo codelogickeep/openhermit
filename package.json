@@ -1,6 +1,6 @@
 {
   "name": "@codelogickeep/open-hermit",
-  "version": "1.1.46",
+  "version": "1.2.1",
   "description": "OpenHermit (开源寄居蟹) - A lightweight PTY bridge that connects Claude Code and local AI CLI agents to mobile messaging platforms (DingTalk). Enables remote access to your AI development environment from your phone.",
   "main": "src/index.js",
   "bin": {

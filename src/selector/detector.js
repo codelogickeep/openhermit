@@ -1,156 +1,121 @@
-import { getLLMClient } from '../llm/index.js';
 import logger from '../utils/logger.js';
-import { TerminalPatterns, extractOptions } from '../formatter/patterns.js';
 
 /**
  * 选择检测器
- * 检测终端输出中的选择提示
+ * 只检测标准交互（y/n 确认、Allow 确认、编号选项）
+ * 其他非标准交互由 LLMInteractionAnalyzer 处理
  */
 class SelectionDetector {
   constructor() {
-    this.llmClient = getLLMClient();
     this.lastSelection = null;
   }
 
   /**
-   * 检测选择提示
+   * 检测是否为标准交互
    * @param {string} terminalOutput - 终端输出
-   * @returns {object|null} 选择信息
+   * @returns {object|null} 检测结果，如果不是标准交互返回 null
    */
-  async detect(terminalOutput) {
+  detect(terminalOutput) {
     if (!terminalOutput || terminalOutput.length === 0) {
       return null;
     }
 
-    // 快速规则检测（优先）
-    const quickResult = this.quickDetect(terminalOutput);
-
-    // 如果快速检测有高置信度结果，直接返回
-    if (quickResult && quickResult.confidence >= 0.9) {
-      this.lastSelection = quickResult;
-      return quickResult;
-    }
-
-    // 如果快速检测没有发现任何选择提示，不调用 LLM
-    // 只有当快速检测发现了可能的选择但置信度较低时，才使用 LLM 增强
-    if (!quickResult) {
-      return null;
-    }
-
-    // LLM 增强检测（仅用于低置信度的候选结果）
-    if (this.llmClient.isAvailable()) {
-      try {
-        const llmResult = await this.llmClient.parseSelection(terminalOutput);
-        if (llmResult && llmResult.hasSelection) {
-          const result = {
-            type: llmResult.selectType,
-            options: llmResult.options,
-            promptText: llmResult.promptText || '',
-            context: llmResult.context || '',
-            confidence: 0.95
-          };
-          this.lastSelection = result;
-          return result;
-        }
-      } catch (error) {
-        logger.warn({ error: error.message }, 'LLM 选择检测失败');
-      }
-    }
-
-    // 返回快速检测结果（低置信度）
-    this.lastSelection = quickResult;
-    return quickResult;
-  }
-
-  /**
-   * 快速规则检测
-   * @param {string} text - 终端输出
-   * @returns {object|null} 选择信息
-   */
-  quickDetect(text) {
-    // 1. Claude Code 选项格式 [1/N]
-    const claudeMatch = text.match(/\[(\d+)\/(\d+)\]/);
-    if (claudeMatch) {
-      const current = parseInt(claudeMatch[1]);
-      const total = parseInt(claudeMatch[2]);
-      const options = extractOptions(text);
-
-      // 更严格的验证：
-      // - 必须有选项
-      // - 当前索引必须在有效范围内
-      // - 选项数量应该与总数匹配（或接近）
-      if (options.length > 0 && current >= 1 && current <= total) {
-        // 标记默认选项
-        options.forEach(opt => {
-          opt.isDefault = (opt.index === current);
-        });
-
-        return {
-          type: 'number',
-          options,
-          promptText: '',
-          context: 'Claude Code 选项',
-          confidence: 0.95
-        };
-      }
-    }
-
-    // 2. y/n 确认
-    const confirmMatch = text.match(/\((y\/n|yes\/no)\)/i);
-    if (confirmMatch) {
-      return {
+    // 1. y/n 确认 - 必须有明确的 y/n 标记
+    if (/\(y\/n\)|\[y\/n\]/i.test(terminalOutput)) {
+      this.lastSelection = {
+        isStandard: true,
         type: 'confirm',
+        promptText: '请确认',
         options: [
           { index: 1, text: 'Yes (同意)', isDefault: false },
           { index: 2, text: 'No (拒绝)', isDefault: false }
         ],
-        promptText: confirmMatch[0],
-        context: '确认提示',
         confidence: 1.0
       };
+      return this.lastSelection;
     }
 
-    // 3. Allow 工具调用确认
-    if (/Allow.*\?/i.test(text) || /allow this/i.test(text)) {
-      return {
+    // 2. Allow 确认 - 工具调用确认
+    if (/Allow\s+.*\?\s*$/im.test(terminalOutput)) {
+      this.lastSelection = {
+        isStandard: true,
         type: 'confirm',
+        promptText: 'Allow this action?',
         options: [
           { index: 1, text: 'Allow (允许)', isDefault: true },
           { index: 2, text: 'Deny (拒绝)', isDefault: false }
         ],
-        promptText: 'Allow this action?',
-        context: '工具调用确认',
-        confidence: 0.9
+        confidence: 1.0
       };
+      return this.lastSelection;
     }
 
-    // 4. 数字选项列表（至少2个选项）
-    const numberedOptions = extractOptions(text);
-    logger.debug({ optionCount: numberedOptions.length, options: numberedOptions }, '提取到的选项');
+    // 3. 编号选项 - 必须有 2 个以上连续编号
+    const options = this.extractNumberedOptions(terminalOutput);
+    if (options.length >= 2) {
+      // 检查是否有 Claude Code 的 [1/N] 标记
+      const claudeMatch = terminalOutput.match(/\[(\d+)\/(\d+)\]/);
+      if (claudeMatch) {
+        const current = parseInt(claudeMatch[1]);
+        options.forEach(opt => {
+          opt.isDefault = (opt.index === current);
+        });
+      }
 
-    if (numberedOptions.length >= 2) {
-      return {
+      this.lastSelection = {
+        isStandard: true,
         type: 'number',
-        options: numberedOptions,
+        options,
         promptText: '',
-        context: '选项列表',
-        confidence: 0.85
+        confidence: 1.0
       };
+      logger.debug({ optionCount: options.length }, '📋 检测到标准编号选项');
+      return this.lastSelection;
     }
 
-    // 5. 方向键选择提示
-    if (/use arrow keys|↑↓|select.*option/i.test(text)) {
-      const options = extractOptions(text);
-      return {
-        type: 'arrow',
-        options: options.length > 0 ? options : [],
-        promptText: '使用方向键选择',
-        context: '方向键选择',
-        confidence: 0.8
-      };
-    }
-
+    // 不是标准交互，返回 null（由 LLM 处理）
+    this.lastSelection = null;
     return null;
+  }
+
+  /**
+   * 提取编号选项
+   * @param {string} text - 终端输出
+   * @returns {array} 选项数组
+   */
+  extractNumberedOptions(text) {
+    const options = [];
+    const lines = text.split('\n');
+
+    for (const line of lines) {
+      // 匹配多种编号格式：1. xxx, 1) xxx, 1] xxx
+      const match = line.match(/^\s*(\d+)[.)\]]\s+(.+)$/);
+      if (match) {
+        const num = parseInt(match[1]);
+        const text = match[2].trim();
+        // 过滤太短的选项（但保留中文短选项）
+        if (text.length >= 2 || /[\u4e00-\u9fa5]/.test(text)) {
+          options.push({ index: num, text, isDefault: false });
+        }
+      }
+    }
+
+    // 验证是否是连续编号
+    if (options.length >= 2) {
+      const numbers = [...new Set(options.map(o => o.index))].sort((a, b) => a - b);
+      const isConsecutive = numbers.every((n, i) => i === 0 || n - numbers[i - 1] <= 2);
+      if (!isConsecutive) {
+        return [];
+      }
+    }
+
+    // 去重
+    const seen = new Set();
+    return options.filter(opt => {
+      if (seen.has(opt.index)) return false;
+      seen.add(opt.index);
+      return true;
+    });
   }
 
   /**
@@ -187,22 +152,11 @@ class SelectionDetector {
         break;
 
       case 'confirm':
-        selection.options.forEach(opt => {
-          output += `${opt.index}️⃣ ${opt.text}\n`;
-        });
-        output += '\n💡 回复 y(同意) 或 n(拒绝)';
-        break;
-
-      case 'arrow':
-        output += '⬆️⬇️ 使用方向键选择\n';
-        selection.options.forEach(opt => {
-          output += `  • ${opt.text}\n`;
-        });
-        output += '\n💡 回复 /up /down /enter 模拟方向键';
+        output += '请回复 \x1b[32my\x1b[0m (同意) 或 \x1b[31mn\x1b[0m (拒绝)';
         break;
 
       default:
-        output += '等待输入...\n';
+        output += '等待输入...';
     }
 
     return output;

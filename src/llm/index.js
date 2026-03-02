@@ -5,11 +5,25 @@
 
 import LLMClient, { getLLMClient } from './client.js';
 import { Prompts } from './prompts.js';
+import InteractionContext, { getInteractionContext } from './interactionContext.js';
+import LLMInteractionAnalyzer, { getInteractionAnalyzer } from './interactionAnalyzer.js';
 
-export { LLMClient, getLLMClient, Prompts };
+export {
+  LLMClient,
+  getLLMClient,
+  Prompts,
+  InteractionContext,
+  getInteractionContext,
+  LLMInteractionAnalyzer,
+  getInteractionAnalyzer
+};
 
 export default {
   LLMClient,
   getLLMClient,
-  Prompts
+  Prompts,
+  InteractionContext,
+  getInteractionContext,
+  LLMInteractionAnalyzer,
+  getInteractionAnalyzer
 };
