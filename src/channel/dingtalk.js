@@ -239,6 +239,10 @@ class DingTalkChannel extends EventEmitter {
       return;
     }
 
+    // 记录发送日志
+    const preview = trimmed.length > 50 ? trimmed.slice(0, 50) + '...' : trimmed;
+    logger.info({ text: preview, context, silentMode: this.silentMode }, '📤 send() 调用');
+
     // 添加到缓冲区
     this.buffer += text;
 
@@ -248,8 +252,11 @@ class DingTalkChannel extends EventEmitter {
     }
 
     // 检查是否需要立即发送
-    if (this.shouldSendNow(text, context)) {
-      logger.debug({ text: trimmed.slice(0, 50) }, '📤 触发立即发送');
+    const shouldSend = this.shouldSendNow(text, context);
+    logger.info({ shouldSend, context }, '📋 shouldSendNow 结果');
+
+    if (shouldSend) {
+      logger.info({ text: preview }, '📤 触发立即发送');
       this.doSend();
       return;
     }

@@ -843,7 +843,7 @@ class OpenHermit {
     const session = this.intentParser.getSession();
 
     if (session.mode === 'claude_active') {
-      this.channel.send('⚠️ Claude 已在运行中，直接发送消息即可');
+      this.channel.send('⚠️ Claude 已在运行中，直接发送消息即可', { immediate: true });
       return;
     }
 
@@ -852,11 +852,11 @@ class OpenHermit {
       // 带任务描述
       const escaped = args.replace(/'/g, "'\\''");
       this.pty.write(`claude '${escaped}'\r`);
-      this.channel.send(`🚀 启动 Claude Code: ${args}`);
+      this.channel.send(`🚀 启动 Claude Code: ${args}`, { immediate: true });
     } else {
       // 纯启动
       this.pty.write('claude\r');
-      this.channel.send('🚀 启动 Claude Code');
+      this.channel.send('🚀 启动 Claude Code', { immediate: true });
     }
 
     session.setMode('claude_active');
