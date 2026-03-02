@@ -61,35 +61,20 @@ class IntentParser {
   async parse(userMessage) {
     const trimmed = userMessage.trim();
 
-    // 1. 只有极简单的输入才用快速规则（y/n、纯数字）
+    // 1. 快速规则匹配（- 前缀的系统命令）
     const simpleResult = this.quickParseSimple(trimmed);
     if (simpleResult) {
-      logger.debug({ intent: simpleResult }, '简单输入，快速匹配');
+      logger.debug({ intent: simpleResult }, '系统命令，快速匹配');
       return simpleResult;
     }
 
-    // 2. 如果在等待选择状态，处理选择响应
-    if (this.session.isWaitingSelection() && this.session.selectionOptions.length > 0) {
-      return this.parseSelectionResponse(userMessage);
-    }
-
-    // 3. LLM 解析（主要方式）
-    if (this.llmClient.isAvailable()) {
-      try {
-        const context = {
-          sessionMode: this.session.mode,
-          hasSelection: this.session.selectionOptions.length > 0
-        };
-
-        const intent = await this.llmClient.parseIntent(userMessage, context);
-        return intent;
-      } catch (error) {
-        logger.warn({ error: error.message }, 'LLM 解析失败，使用规则降级');
-      }
-    }
-
-    // 4. 降级：使用完整规则匹配
-    return this.quickParse(trimmed);
+    // 2. 其他所有内容：转发给 Claude
+    return {
+      type: IntentTypes.CLAUDE_COMMAND,
+      command: trimmed,
+      params: {},
+      confidence: 1.0
+    };
   }
 
   /**
@@ -99,42 +84,26 @@ class IntentParser {
    */
   quickParseSimple(userMessage) {
     const trimmed = userMessage.trim();
-    const lower = trimmed.toLowerCase();
 
     // 空消息
     if (!trimmed) {
       return null;
     }
 
-    // y/n 确认（极高频，不需要 LLM）
-    if (lower === 'y' || lower === 'yes') {
+    // OpenHermit 系统命令（- 前缀）
+    if (trimmed.startsWith('-')) {
+      const parts = trimmed.slice(1).trim().split(/\s+/);
+      const cmd = parts[0].toLowerCase();
+
       return {
-        type: IntentTypes.CONVERSATION,
-        command: 'confirm',
-        params: { value: 'y' },
-        confidence: 1.0
-      };
-    }
-    if (lower === 'n' || lower === 'no') {
-      return {
-        type: IntentTypes.CONVERSATION,
-        command: 'confirm',
-        params: { value: 'n' },
+        type: IntentTypes.BUILT_IN,
+        command: cmd,
+        params: { args: parts.slice(1).join(' ') },
         confidence: 1.0
       };
     }
 
-    // 纯数字选择（极高频，不需要 LLM）
-    if (/^\d+$/.test(trimmed)) {
-      return {
-        type: IntentTypes.CONVERSATION,
-        command: 'select',
-        params: { choice: parseInt(trimmed) },
-        confidence: 1.0
-      };
-    }
-
-    // 其他输入都走 LLM
+    // 其他输入都转发给 Claude
     return null;
   }
 
@@ -151,46 +120,26 @@ class IntentParser {
       return null;
     }
 
-    // 内置命令
-    if (trimmed.startsWith('/')) {
-      const parts = trimmed.split(/\s+/);
+    // OpenHermit 系统命令（- 前缀）
+    if (trimmed.startsWith('-')) {
+      const parts = trimmed.slice(1).trim().split(/\s+/);
       const cmd = parts[0].toLowerCase();
 
-      if (cmd === '/cd') {
-        return {
-          type: IntentTypes.BUILT_IN,
-          command: '/cd',
-          params: { path: parts.slice(1).join(' ') || '' },
-          confidence: 1.0
-        };
-      }
-
-      if (cmd === '/ls') {
-        return {
-          type: IntentTypes.BUILT_IN,
-          command: '/ls',
-          params: {},
-          confidence: 1.0
-        };
-      }
-
-      if (cmd === '/restart') {
-        return {
-          type: IntentTypes.BUILT_IN,
-          command: '/restart',
-          params: {},
-          confidence: 1.0
-        };
-      }
-
-      // 未知的内置命令
       return {
         type: IntentTypes.BUILT_IN,
         command: cmd,
-        params: { raw: trimmed },
-        confidence: 0.8
+        params: { args: parts.slice(1).join(' ') },
+        confidence: 1.0
       };
     }
+
+    // 其他所有内容：转发给 Claude
+    return {
+      type: IntentTypes.CLAUDE_COMMAND,
+      command: trimmed,
+      params: {},
+      confidence: 1.0
+    };
 
     // y/n 确认
     const lower = trimmed.toLowerCase();

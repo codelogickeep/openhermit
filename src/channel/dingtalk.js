@@ -435,10 +435,14 @@ class DingTalkChannel extends EventEmitter {
       // 优先使用 sessionWebhook 被动回复
       if (this.sessionWebhook) {
         try {
+          // 使用 markdown 类型发送
           const body = {
             at: { atUserIds: [this.userId], isAtAll: false },
-            text: { content: text },
-            msgtype: 'text'
+            msgtype: 'markdown',
+            markdown: {
+              title: 'Claude Code',
+              text: text
+            }
           };
 
           await axios({
@@ -478,8 +482,11 @@ class DingTalkChannel extends EventEmitter {
     const body = {
       robotCode: robotCode,
       userIds: [userId],
-      msgKey: 'sampleText',
-      msgParam: JSON.stringify({ content: text })
+      msgKey: 'sampleMarkdown',
+      msgParam: JSON.stringify({
+        title: 'Claude Code',
+        text: text
+      })
     };
 
     try {
@@ -503,16 +510,22 @@ class DingTalkChannel extends EventEmitter {
    */
   async sendStartupMessage(userId) {
     const rootDir = getAllowedRootDir();
-    const startupMsg = `🦀 老板，系统已就绪，请下达指令。
+    const startupMsg = `## 🦀 老板，系统已就绪
 
-当前工作目录: ${rootDir}
+**当前工作目录:** \`${rootDir}\`
 
-常用命令:
-/cd <目录>  - 切换工作目录
-/ls         - 查看可选目录
-/restart    - 重启 Claude Code
+### 📖 OpenHermit 命令（- 前缀）
+| 命令 | 说明 |
+|------|------|
+| \`-cd <目录>\` | 切换工作目录 |
+| \`-ls\` | 查看可选目录 |
+| \`-claude [任务]\` | 启动 Claude Code |
+| \`-status\` | 查看执行状态 |
+| \`-help\` | 查看帮助 |
 
-直接发送你的需求即可，我会立即响应！`;
+### 💡 使用说明
+- 带 \`-\` 前缀的命令由 OpenHermit 处理
+- 其他所有内容直接发送给 Claude 终端`;
 
     try {
       const accessToken = await this.getAccessToken();
@@ -529,7 +542,7 @@ class DingTalkChannel extends EventEmitter {
     const rootDir = getAllowedRootDir();
 
     // 列出根目录下的子目录
-    let dirList = `  - ${rootDir}`;
+    let dirList = `- \`${rootDir}\``;
     try {
       const items = fs.readdirSync(rootDir);
       const dirs = items.filter(item => {
@@ -538,24 +551,31 @@ class DingTalkChannel extends EventEmitter {
         } catch { return false; }
       });
       if (dirs.length > 0) {
-        dirList = dirs.map(dir => `  - ${rootDir}/${dir}`).join('\n');
+        dirList = dirs.map(dir => `- \`${rootDir}/${dir}\``).join('\n');
       }
     } catch (e) {
       logger.warn({ error: e.message }, '读取根目录失败');
     }
 
-    const welcomeMsg = `🦀 欢迎使用 OpenHermit
+    const welcomeMsg = `## 🦀 欢迎使用 OpenHermit
 
-当前工作目录: ${rootDir}
-可选目录:
+**当前工作目录:** \`${rootDir}\`
+
+### 📂 可选目录
 ${dirList}
 
-命令:
-  /cd <目录>  切换工作目录
-  /ls         查看可选目录
-  /restart    重启 Claude Code
+### 📖 OpenHermit 命令（- 前缀）
+| 命令 | 说明 |
+|------|------|
+| \`-cd <目录>\` | 切换工作目录 |
+| \`-ls\` | 查看可选目录 |
+| \`-claude [任务]\` | 启动 Claude Code |
+| \`-status\` | 查看执行状态 |
+| \`-help\` | 查看帮助 |
 
-请先使用 /cd 切换到项目目录，然后输入 claude 启动。`;
+### 💡 使用说明
+- 带 \`-\` 前缀的命令由 OpenHermit 处理
+- 其他所有内容直接发送给 Claude 终端`;
 
     this.send(welcomeMsg);
   }
@@ -566,7 +586,7 @@ ${dirList}
   sendDirList(currentDir) {
     const rootDir = getAllowedRootDir();
 
-    let msg = `当前工作目录: ${currentDir}\n白名单根目录: ${rootDir}\n\n`;
+    let msg = `## 📂 目录列表\n\n**当前工作目录:** \`${currentDir}\`\n**白名单根目录:** \`${rootDir}\`\n\n`;
 
     try {
       const items = fs.readdirSync(rootDir);
@@ -576,13 +596,13 @@ ${dirList}
       });
 
       if (dirs.length > 0) {
-        msg += '可选目录:\n';
-        dirs.forEach(dir => msg += `  - ${rootDir}/${dir}\n`);
+        msg += '### 可选目录\n';
+        dirs.forEach(dir => msg += `- \`${rootDir}/${dir}\`\n`);
       } else {
-        msg += '目录下没有子目录';
+        msg += '> 目录下没有子目录';
       }
     } catch (error) {
-      msg += `无法读取目录: ${error.message}`;
+      msg += `❌ 无法读取目录: ${error.message}`;
     }
 
     this.send(msg);

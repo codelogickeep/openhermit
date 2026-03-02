@@ -63,81 +63,117 @@ describe('IntentParser - Quick Parse', () => {
     parser.resetSession();
   });
 
-  describe('Built-in commands', () => {
-    it('should parse /cd command', async () => {
-      const intent = await parser.parse('/cd myproject');
+  describe('System commands (- prefix)', () => {
+    it('should parse -cd command', async () => {
+      const intent = await parser.parse('-cd myproject');
       expect(intent.type).toBe(IntentTypes.BUILT_IN);
-      expect(intent.command).toBe('/cd');
-      expect(intent.params.path).toBe('myproject');
-      expect(intent.confidence).toBe(1.0);
+      expect(intent.command).toBe('cd');
+      expect(intent.params.args).toBe('myproject');
     });
 
-    it('should parse /ls command', async () => {
-      const intent = await parser.parse('/ls');
+    it('should parse -ls command', async () => {
+      const intent = await parser.parse('-ls');
       expect(intent.type).toBe(IntentTypes.BUILT_IN);
-      expect(intent.command).toBe('/ls');
-    });
-
-    it('should parse /restart command', async () => {
-      const intent = await parser.parse('/restart');
-      expect(intent.type).toBe(IntentTypes.BUILT_IN);
-      expect(intent.command).toBe('/restart');
-    });
-  });
-
-  describe('Confirmation', () => {
-    it('should parse y as confirm', async () => {
-      const intent = await parser.parse('y');
-      expect(intent.type).toBe(IntentTypes.CONVERSATION);
-      expect(intent.command).toBe('confirm');
-      expect(intent.params.value).toBe('y');
-    });
-
-    it('should parse n as confirm', async () => {
-      const intent = await parser.parse('n');
-      expect(intent.type).toBe(IntentTypes.CONVERSATION);
-      expect(intent.params.value).toBe('n');
-    });
-  });
-
-  describe('Selection', () => {
-    it('should parse number as selection', async () => {
-      const intent = await parser.parse('2');
-      expect(intent.type).toBe(IntentTypes.CONVERSATION);
-      expect(intent.command).toBe('select');
-      expect(intent.params.choice).toBe(2);
-    });
-
-    it('should parse Chinese number as selection', async () => {
-      const intent = await parser.parse('第二个');
-      expect(intent.type).toBe(IntentTypes.CONVERSATION);
-      expect(intent.params.choice).toBe(2);
-    });
-  });
-
-  describe('Shell commands', () => {
-    it('should parse ls as shell command', async () => {
-      const intent = await parser.parse('ls');
-      expect(intent.type).toBe(IntentTypes.SHELL_COMMAND);
       expect(intent.command).toBe('ls');
     });
 
-    it('should parse git status as shell command', async () => {
-      const intent = await parser.parse('git status');
-      expect(intent.type).toBe(IntentTypes.SHELL_COMMAND);
+    it('should parse -claude command', async () => {
+      const intent = await parser.parse('-claude');
+      expect(intent.type).toBe(IntentTypes.BUILT_IN);
+      expect(intent.command).toBe('claude');
+    });
+
+    it('should parse -claude with task', async () => {
+      const intent = await parser.parse('-claude 帮我写代码');
+      expect(intent.type).toBe(IntentTypes.BUILT_IN);
+      expect(intent.command).toBe('claude');
+      expect(intent.params.args).toBe('帮我写代码');
+    });
+
+    it('should parse -status command', async () => {
+      const intent = await parser.parse('-status');
+      expect(intent.type).toBe(IntentTypes.BUILT_IN);
+      expect(intent.command).toBe('status');
+    });
+
+    it('should parse -help command', async () => {
+      const intent = await parser.parse('-help');
+      expect(intent.type).toBe(IntentTypes.BUILT_IN);
+      expect(intent.command).toBe('help');
     });
   });
 
-  describe('Claude commands', () => {
-    it('should parse development request as claude command', async () => {
-      const intent = await parser.parse('帮我分析一下代码');
+  describe('Claude content (no - prefix)', () => {
+    it('should parse /help as claude_command', async () => {
+      const intent = await parser.parse('/help');
       expect(intent.type).toBe(IntentTypes.CLAUDE_COMMAND);
+      expect(intent.command).toBe('/help');
     });
 
-    it('should parse explicit claude command', async () => {
-      const intent = await parser.parse('claude 开始工作');
+    it('should parse /commit as claude_command', async () => {
+      const intent = await parser.parse('/commit');
       expect(intent.type).toBe(IntentTypes.CLAUDE_COMMAND);
-      expect(intent.params.explicit).toBe(true);
+      expect(intent.command).toBe('/commit');
+    });
+
+    it('should parse cd (without -) as claude_command', async () => {
+      const intent = await parser.parse('cd src');
+      expect(intent.type).toBe(IntentTypes.CLAUDE_COMMAND);
+      expect(intent.command).toBe('cd src');
+    });
+
+    it('should parse ls (without -) as claude_command', async () => {
+      const intent = await parser.parse('ls');
+      expect(intent.type).toBe(IntentTypes.CLAUDE_COMMAND);
+      expect(intent.command).toBe('ls');
+    });
+
+    it('should parse development request as claude_command', async () => {
+      const intent = await parser.parse('帮我分析一下代码');
+      expect(intent.type).toBe(IntentTypes.CLAUDE_COMMAND);
+      expect(intent.command).toBe('帮我分析一下代码');
+    });
+  });
+
+  describe('Confirmation (forwarded to Claude)', () => {
+    it('should parse y as claude_command', async () => {
+      const intent = await parser.parse('y');
+      expect(intent.type).toBe(IntentTypes.CLAUDE_COMMAND);
+      expect(intent.command).toBe('y');
+    });
+
+    it('should parse n as claude_command', async () => {
+      const intent = await parser.parse('n');
+      expect(intent.type).toBe(IntentTypes.CLAUDE_COMMAND);
+      expect(intent.command).toBe('n');
+    });
+  });
+
+  describe('Selection (forwarded to Claude)', () => {
+    it('should parse number as claude_command', async () => {
+      const intent = await parser.parse('2');
+      expect(intent.type).toBe(IntentTypes.CLAUDE_COMMAND);
+      expect(intent.command).toBe('2');
+    });
+
+    it('should parse Chinese number as claude_command', async () => {
+      const intent = await parser.parse('第二个');
+      expect(intent.type).toBe(IntentTypes.CLAUDE_COMMAND);
+      expect(intent.command).toBe('第二个');
+    });
+  });
+
+  describe('Shell commands (forwarded to Claude)', () => {
+    it('should parse git status as claude_command', async () => {
+      const intent = await parser.parse('git status');
+      expect(intent.type).toBe(IntentTypes.CLAUDE_COMMAND);
+      expect(intent.command).toBe('git status');
+    });
+
+    it('should parse npm install as claude_command', async () => {
+      const intent = await parser.parse('npm install');
+      expect(intent.type).toBe(IntentTypes.CLAUDE_COMMAND);
+      expect(intent.command).toBe('npm install');
     });
   });
 });

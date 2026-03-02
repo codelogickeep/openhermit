@@ -174,19 +174,25 @@ class LLMClient {
   fallbackIntentParse(userMessage) {
     const trimmed = userMessage.trim();
 
-    // 内置命令
-    if (trimmed.startsWith('/')) {
-      const parts = trimmed.split(/\s+/);
+    // OpenHermit 系统命令（- 前缀）
+    if (trimmed.startsWith('-')) {
+      const parts = trimmed.slice(1).trim().split(/\s+/);
       const cmd = parts[0].toLowerCase();
-      if (['/cd', '/ls', '/restart'].includes(cmd)) {
-        return {
-          type: 'built_in',
-          command: cmd,
-          params: { path: parts.slice(1).join(' ') },
-          confidence: 1.0
-        };
-      }
+      return {
+        type: 'built_in',
+        command: cmd,
+        params: { args: parts.slice(1).join(' ') },
+        confidence: 1.0
+      };
     }
+
+    // 其他所有内容：转发给 Claude
+    return {
+      type: 'claude_command',
+      command: trimmed,
+      params: {},
+      confidence: 1.0
+    };
 
     // y/n 确认
     const lower = trimmed.toLowerCase();

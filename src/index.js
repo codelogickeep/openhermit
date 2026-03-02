@@ -184,7 +184,7 @@ class OpenHermit {
     // 设置 PTY 退出监听
     this.pty.onExit(({ exitCode, signal }) => {
       logger.warn({ exitCode, signal }, 'PTY 进程退出');
-      this.channel.send(`\n⚠️ Claude Code 已退出 (exitCode: ${exitCode})\n请输入 /restart 重新启动\n`);
+      // 不主动推送退出通知，用户可通过 -status 查看
     });
 
     // 设置通道消息监听
@@ -287,40 +287,21 @@ class OpenHermit {
       this.hitlActive = true;
       this.pausedBuffer = data;
 
-      // 发送净化后的内容（到 HITL 提示之前）
+      // 发送审批提示（HITL 需要用户交互，必须推送）
       const prompt = extractHitlPrompt(cleanData);
-      const contentBeforePrompt = cleanData.slice(0, cleanData.indexOf(prompt));
-      if (contentBeforePrompt) {
-        this.channel.send(contentBeforePrompt, { immediate: true });
-      }
-
-      // 发送审批提示
       const cardMsg = `\n⚠️ 需要审批\n${prompt || '检测到危险命令，需要您的审批'}\n请回复 'y' 同意 或 'n' 拒绝\n`;
       this.channel.send(cardMsg, { immediate: true });
       return;
     }
 
-    // 检测任务是否完成
-    const isCompleted = this.checkTaskCompletion(cleanData);
+    // 检测任务是否完成（用于状态更新，但不主动推送）
+    this.checkTaskCompletion(cleanData);
 
-    // 格式化输出为 Markdown
-    let formattedData;
-    if (this.smartMode && cleanData.length > 100) {
-      // 使用 LLM 格式化（复杂输出）
-      try {
-        formattedData = await this.formatter.format(cleanData);
-      } catch (error) {
-        logger.warn({ error: error.message }, 'LLM 格式化失败，使用基本格式化');
-        formattedData = this.formatter.basicFormat(cleanData);
-      }
-    } else {
-      // 使用基本格式化（简单输出）
-      formattedData = this.formatter.basicFormat(cleanData);
-    }
-
-    if (formattedData) {
-      // 发送时带上上下文（任务完成状态）
-      this.channel.send(formattedData, { taskCompleted: isCompleted });
+    // 终端输出只缓冲，不主动推送到钉钉
+    // 用户可以通过 -status 命令查看
+    this.channel.buffer += this.formatter.basicFormat(cleanData);
+    if (this.channel.buffer.length > this.channel.maxBufferSize) {
+      this.channel.buffer = this.channel.buffer.slice(-this.channel.maxBufferSize);
     }
   }
 
@@ -400,21 +381,20 @@ class OpenHermit {
       return;
     }
 
-    // 内置命令处理（优先级最高）
-    if (trimmed.startsWith('/')) {
-      this.handleCommand(trimmed);
+    // OpenHermit 系统命令（- 前缀）
+    if (trimmed.startsWith('-')) {
+      this.handleSystemCommand(trimmed);
       return;
     }
 
-    // 根据 session mode 分发消息
+    // 其他所有内容：转发给 Claude 终端
     const session = this.intentParser.getSession();
-
-    if (session.mode === 'idle') {
-      // 启动前：使用 LLM 意图解析
-      await this.handleIdleMessage(trimmed);
+    if (session.mode === 'claude_active') {
+      // Claude 已启动：原封不动转发
+      this.pty.write(trimmed + '\r');
     } else {
-      // 启动后：检测交互则 LLM 解析，否则直接透传
-      await this.handleActiveMessage(trimmed);
+      // Claude 未启动：提示错误
+      this.channel.send(`⚠️ Claude 终端未启动\n\n使用 \`-claude\` 启动，或发送 \`-help\` 查看帮助`);
     }
   }
 
@@ -436,7 +416,7 @@ class OpenHermit {
 
         if (intent.type === IntentTypes.SHELL_COMMAND) {
           logger.info({ command: intent.command }, '执行 shell 命令');
-          this.channel.send(`🔧 执行命令: ${intent.command}`);
+          // 不推送执行确认，直接执行
           this.pty.write(intent.command + '\r');
           return;
         }
@@ -709,12 +689,10 @@ class OpenHermit {
       if (isStartOnly) {
         // 纯启动命令，直接执行 claude
         claudeCmd = 'claude';
-        this.channel.send(`🚀 启动 Claude Code`);
       } else {
         // 带任务的命令，传入任务描述
         const escaped = command.replace(/'/g, "'\\''");
         claudeCmd = `claude '${escaped}'`;
-        this.channel.send(`🚀 启动 Claude Code: ${command}`);
       }
 
       this.pty.write(claudeCmd + '\r');
@@ -769,49 +747,107 @@ class OpenHermit {
   }
 
   /**
-   * 处理内置命令
+   * 处理系统命令（- 前缀）
    * @param {string} command - 命令
    */
-  handleCommand(command) {
-    const parts = command.split(/\s+/);
+  handleSystemCommand(command) {
+    const parts = command.slice(1).trim().split(/\s+/); // 移除 - 前缀
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1).join(' ');
 
     switch (cmd) {
-      case '/cd':
+      case 'cd':
         this.handleCd(args);
         break;
-      case '/ls':
+      case 'ls':
         this.handleLs();
         break;
-      case '/restart':
-        this.handleRestart();
-        break;
-      case '/status':
-        this.handleStatus();
-        break;
-      case '/claude':
+      case 'claude':
         this.handleClaude(args);
         break;
+      case 'status':
+        this.handleStatus();
+        break;
+      case 'help':
+        this.handleHelp();
+        break;
       default:
-        this.channel.send(`未知命令: ${cmd}\n可用命令: /cd, /ls, /restart, /status, /claude`);
+        this.channel.send(`❌ 未知命令: \`-${cmd}\`\n\n使用 \`-help\` 查看可用命令。`);
     }
   }
 
   /**
-   * 处理 /claude 命令 - 直接启动 Claude（不经过 LLM）
+   * 处理 -help 命令
+   */
+  handleHelp() {
+    const msg = `## 📖 OpenHermit 帮助
+
+### 📂 目录管理
+| 命令 | 说明 |
+|------|------|
+| \`-cd <目录>\` | 切换工作目录 |
+| \`-ls\` | 查看可选目录 |
+
+### 🚀 系统命令
+| 命令 | 说明 |
+|------|------|
+| \`-claude [任务]\` | 启动 Claude Code |
+| \`-status\` | 查看执行状态 |
+| \`-help\` | 查看帮助 |
+
+### 💡 使用说明
+- 带 \`-\` 前缀的命令由 OpenHermit 处理
+- 其他所有内容直接发送给 Claude 终端`;
+
+    this.channel.send(msg);
+  }
+
+  /**
+   * 处理 -cd 命令
+   * @param {string} path - 目标路径
+   */
+  handleCd(path) {
+    if (!path) {
+      this.channel.send('用法: `-cd <目录路径>`');
+      return;
+    }
+
+    // 处理相对路径
+    let targetPath = path;
+    if (!path.startsWith('/')) {
+      targetPath = `${this.pty.getWorkingDir()}/${path}`;
+    }
+
+    const success = this.pty.setWorkingDir(targetPath);
+
+    if (success) {
+      this.channel.send(`✅ 已切换到: \`${this.pty.getWorkingDir()}\``);
+    } else {
+      const rootDir = getAllowedRootDir();
+      this.channel.send(`❌ 切换失败: 仅允许在 \`${rootDir}\` 下操作`);
+    }
+  }
+
+  /**
+   * 处理 -ls 命令
+   */
+  handleLs() {
+    this.channel.sendDirList(this.pty.getWorkingDir());
+  }
+
+  /**
+   * 处理 -claude 命令 - 直接启动 Claude
    * @param {string} args - 可选的任务描述
    */
   handleClaude(args) {
     const session = this.intentParser.getSession();
 
     if (session.mode === 'claude_active') {
-      // 已在 Claude 会话中，提示用户
       this.channel.send('⚠️ Claude 已在运行中，直接发送消息即可');
       return;
     }
 
-    // 直接启动 Claude
+    // 启动 Claude
     if (args) {
       // 带任务描述
       const escaped = args.replace(/'/g, "'\\''");
@@ -827,36 +863,33 @@ class OpenHermit {
   }
 
   /**
-   * 处理 /status 命令
+   * 处理 -status 命令 - 查看系统状态
    */
   handleStatus() {
     const session = this.intentParser.getSession();
 
-    let msg = '📊 当前状态\n\n';
-    msg += `会话模式: ${session.mode === 'claude_active' ? 'Claude 活跃' : '空闲'}\n`;
-    msg += `任务状态: ${this.taskStatus.isRunning ? '运行中' : '空闲'}\n`;
+    let msg = '## 📊 系统状态\n\n';
+    msg += `| 项目 | 状态 |\n|------|------|\n`;
+    msg += `| 会话模式 | ${session.mode === 'claude_active' ? '🟢 Claude 活跃' : '⚪ 空闲'} |\n`;
+    msg += `| 任务状态 | ${this.taskStatus.isRunning ? '🔄 运行中' : '⚪ 空闲'} |\n`;
+    msg += `| 静默模式 | ${this.channel.silentMode ? '是' : '否'} |\n`;
 
     if (this.taskStatus.isRunning && this.taskStatus.startTime) {
       const elapsed = Math.floor((Date.now() - this.taskStatus.startTime) / 1000);
       const minutes = Math.floor(elapsed / 60);
       const seconds = elapsed % 60;
-      msg += `运行时间: ${minutes}分${seconds}秒\n`;
+      msg += `| 运行时间 | ${minutes}分${seconds}秒 |\n`;
     }
 
-    msg += `任务阶段: ${this.taskStatus.phase}\n`;
-    msg += `静默模式: ${this.channel.silentMode ? '是' : '否'}\n`;
+    msg += `\n**当前目录:** \`${this.pty.getWorkingDir()}\``;
 
     // 显示缓冲区状态
     if (this.outputBuffer.pending) {
-      const previewLength = 500;
+      const previewLength = 300;
       const preview = this.outputBuffer.pending.length > previewLength
         ? this.outputBuffer.pending.slice(-previewLength)
         : this.outputBuffer.pending;
-      msg += `\n📝 待发送输出 (最近 ${preview.length} 字符):\n`;
-      msg += '─'.repeat(20) + '\n';
-      msg += preview;
-    } else {
-      msg += '\n📝 待发送输出: (空)';
+      msg += `\n\n### 📝 最近输出\n\`\`\`\n${preview}\n\`\`\``;
     }
 
     // 立即发送状态信息
@@ -864,48 +897,6 @@ class OpenHermit {
 
     // 同时刷新缓冲区内容
     this.channel.flushBuffer();
-  }
-
-  /**
-   * 处理 /cd 命令
-   * @param {string} path - 目标路径
-   */
-  handleCd(path) {
-    if (!path) {
-      this.channel.send('用法: /cd <目录路径>');
-      return;
-    }
-
-    // 处理相对路径
-    let targetPath = path;
-    if (!path.startsWith('/')) {
-      targetPath = `${this.pty.getWorkingDir()}/${path}`;
-    }
-
-    const success = this.pty.setWorkingDir(targetPath);
-
-    if (success) {
-      this.channel.send(`✅ 已切换到: ${this.pty.getWorkingDir()}`);
-    } else {
-      const rootDir = getAllowedRootDir();
-      this.channel.send(`❌ 切换失败: 仅允许在 ${rootDir} 下操作`);
-    }
-  }
-
-  /**
-   * 处理 /ls 命令
-   */
-  handleLs() {
-    this.channel.sendDirList(this.pty.getWorkingDir());
-  }
-
-  /**
-   * 处理 /restart 命令
-   */
-  handleRestart() {
-    this.channel.send('🔄 正在重启 Claude Code...');
-    this.pty.restart();
-    this.channel.send('✅ Claude Code 已重启，请输入 claude 启动');
   }
 
   /**
