@@ -575,6 +575,65 @@ class LLMClient {
       confidence: 0.7
     };
   }
+
+  /**
+   * 总结终端输出状态
+   * 用于 -status 命令显示最近输出
+   * @param {string} terminalOutput - 终端缓冲区内容
+   * @returns {Promise<string>} 总结内容
+   */
+  async summarizeStatus(terminalOutput) {
+    if (!this.isAvailable()) {
+      return this.fallbackSummarizeStatus(terminalOutput);
+    }
+
+    // 如果输出太短，直接返回
+    if (terminalOutput.length < 50) {
+      return this.fallbackSummarizeStatus(terminalOutput);
+    }
+
+    try {
+      // 截取最近的输出（最多 1500 字符）
+      const recentOutput = terminalOutput.slice(-1500);
+
+      const prompt = Prompts.summarizeStatus.replace('{{terminalOutput}}', recentOutput);
+      const response = await this.chat(prompt, {
+        temperature: 0.3,
+        maxTokens: 300,
+        timeout: 15000,
+        systemPrompt: '你是一个终端输出总结助手，生成简洁的状态报告。直接返回总结内容，不要添加额外说明。'
+      });
+
+      return response.trim();
+    } catch (error) {
+      logger.warn({ error: error.message }, 'LLM 状态总结失败，使用降级方案');
+      return this.fallbackSummarizeStatus(terminalOutput);
+    }
+  }
+
+  /**
+   * 降级：简单的状态总结
+   * @param {string} terminalOutput - 终端输出
+   * @returns {string} 总结内容
+   */
+  fallbackSummarizeStatus(terminalOutput) {
+    if (!terminalOutput || terminalOutput.trim().length < 20) {
+      return '暂无有效输出';
+    }
+
+    // 清理输出
+    let cleaned = terminalOutput
+      .replace(/[\x00-\x1f\x7f]/g, '')  // 移除控制字符
+      .replace(/\n{3,}/g, '\n\n')       // 压缩空行
+      .trim();
+
+    // 截取最后 200 字符
+    if (cleaned.length > 200) {
+      cleaned = '...' + cleaned.slice(-200);
+    }
+
+    return cleaned;
+  }
 }
 
 // 单例

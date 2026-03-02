@@ -1290,7 +1290,7 @@ class OpenHermit {
   /**
    * 处理 -status 命令 - 查看系统状态
    */
-  handleStatus() {
+  async handleStatus() {
     const session = this.intentParser.getSession();
 
     let msg = '## 📊 系统状态\n\n';
@@ -1308,13 +1308,23 @@ class OpenHermit {
 
     msg += `\n**当前目录:** \`${this.pty.getWorkingDir()}\``;
 
-    // 显示缓冲区状态
-    if (this.outputBuffer.pending) {
-      const previewLength = 300;
-      const preview = this.outputBuffer.pending.length > previewLength
-        ? this.outputBuffer.pending.slice(-previewLength)
-        : this.outputBuffer.pending;
-      msg += `\n\n### 📝 最近输出\n\`\`\`\n${preview}\n\`\`\``;
+    // 使用 LLM 总结最近输出（使用完整的终端缓冲区）
+    if (this.terminalBuffer && this.terminalBuffer.trim().length > 50) {
+      msg += '\n\n### 📝 最近输出\n';
+
+      if (this.smartMode) {
+        try {
+          // 使用 LLM 总结
+          const summary = await this.llmClient.summarizeStatus(this.terminalBuffer);
+          msg += summary;
+        } catch (error) {
+          // 降级：显示原始输出的最后部分
+          msg += this.getFallbackStatusOutput();
+        }
+      } else {
+        // 非智能模式：显示原始输出
+        msg += this.getFallbackStatusOutput();
+      }
     }
 
     // 立即发送状态信息
@@ -1322,6 +1332,28 @@ class OpenHermit {
 
     // 同时刷新缓冲区内容
     this.channel.flushBuffer();
+  }
+
+  /**
+   * 获取降级的最近输出（用于 -status 命令）
+   * @returns {string} 格式化的输出
+   */
+  getFallbackStatusOutput() {
+    if (!this.terminalBuffer || this.terminalBuffer.trim().length < 20) {
+      return '暂无有效输出';
+    }
+
+    // 清理并截取最后 200 字符
+    let cleaned = this.terminalBuffer
+      .replace(/[\x00-\x1f\x7f]/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    if (cleaned.length > 200) {
+      cleaned = '...' + cleaned.slice(-200);
+    }
+
+    return `\`\`\`\n${cleaned}\n\`\`\``;
   }
 
   /**
