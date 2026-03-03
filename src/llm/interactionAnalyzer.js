@@ -5,77 +5,8 @@
 
 import { getLLMClient } from './client.js';
 import { getInteractionContext } from './interactionContext.js';
+import { InteractionPrompts } from './prompts/index.js';
 import logger from '../utils/logger.js';
-
-/**
- * LLM Prompt 模板
- */
-const AnalyzePrompts = {
-  /**
-   * 终端输出分析 Prompt
-   */
-  analyzeOutput: `你是一个终端交互分析助手。分析以下 Claude Code 终端输出，判断当前状态。
-
-【终端输出】
-"""
-{{terminalOutput}}
-"""
-
-请返回 JSON 格式：
-{
-  "needsInteraction": true/false,
-  "type": "selection | text_input | confirmation | none",
-  "taskCompleted": true/false,
-  "context": {
-    "question": "Claude 正在问用户什么问题？（简洁明了，不超过100字）",
-    "options": ["选项1", "选项2", ...],
-    "additionalInfo": "其他有用的上下文信息（可选）"
-  }
-}
-
-判断标准：
-1. needsInteraction: 如果 Claude 正在等待用户输入，设为 true
-2. taskCompleted: 如果终端显示 "Crunched for XXs" 或 "Brewed for XXs" 或任务已明确完成，设为 true
-3. type:
-   - selection: 有编号选项列表供用户选择
-   - text_input: 需要用户输入自由文本
-   - confirmation: y/n 确认
-   - none: Claude 正在思考或执行任务，不需要用户输入
-4. options: 仅当 type 为 selection 时，提取选项列表
-5. question: 提取 Claude 正在问的问题
-6. 只返回 JSON，不要其他内容`,
-
-  /**
-   * 用户回复解析 Prompt
-   */
-  parseReply: `你是一个用户意图解析助手。
-
-【之前的终端输出】
-"""
-{{terminalOutput}}
-"""
-
-【分析的问题】
-{{previousAnalysis}}
-
-【用户的回复】
-{{userReply}}
-
-请将用户回复转换为终端输入。
-
-返回 JSON 格式：
-{
-  "understood": true,
-  "input": "要发送到终端的具体内容",
-  "feedback": "给用户的简短反馈（可选）"
-}
-
-要求：
-1. 如果用户回复数字，原样保留
-2. 如果用户回复文本描述，转换为合适的输入
-3. 模糊回复时，根据上下文推断
-4. 只返回 JSON`
-};
 
 /**
  * LLM 交互分析器
@@ -95,7 +26,7 @@ class LLMInteractionAnalyzer {
     // 尝试 LLM 分析
     if (this.llmClient.isAvailable()) {
       try {
-        const prompt = AnalyzePrompts.analyzeOutput.replace('{{terminalOutput}}', terminalOutput);
+        const prompt = InteractionPrompts.analyzeOutput.replace('{{terminalOutput}}', terminalOutput);
 
         // 打印发送给 LLM 的内容
         logger.info({
@@ -204,7 +135,7 @@ class LLMInteractionAnalyzer {
     // 有上下文，用 LLM 解析
     if (this.llmClient.isAvailable()) {
       try {
-        const prompt = AnalyzePrompts.parseReply
+        const prompt = InteractionPrompts.parseReply
           .replace('{{terminalOutput}}', interactionContext.terminalOutput)
           .replace('{{previousAnalysis}}', JSON.stringify(interactionContext.analysis))
           .replace('{{userReply}}', userReply);

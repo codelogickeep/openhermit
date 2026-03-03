@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getDashScopeApiKey, getDashScopeModel } from '../config/index.js';
 import logger from '../utils/logger.js';
-import { Prompts } from './prompts.js';
+import { Prompts } from './prompts/index.js';
 
 /**
  * 阿里云百炼（DashScope）API 客户端
