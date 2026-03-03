@@ -19,11 +19,31 @@ let shadowConfigDir = null;
  * @returns {string} 配置目录路径
  */
 export function generateShadowConfig(ipcPort = DEFAULT_IPC_PORT) {
-  // 创建临时配置目录
-  shadowConfigDir = path.join(os.tmpdir(), `hermit-config-${process.pid}`);
-
-  // 确保 hooks 目录路径是绝对的
+  // 确保 hooks 目录路径是绝对的（hooks 始终在 npm 包目录中）
   const hooksDir = path.resolve(__dirname, '../hooks');
+
+  // 判断是源码运行还是 npm 安装运行
+  // 源码运行：存在 src 目录和 package.json 在上级目录，且 package.json 中没有 bin 字段
+  let isSourceRun = false;
+  try {
+    const packageJsonPath = path.join(__dirname, '../../package.json');
+    if (fs.existsSync(packageJsonPath)) {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      // 如果没有 bin 字段，说明是源码运行（开发模式）
+      isSourceRun = !packageJson.bin;
+    }
+  } catch {
+    isSourceRun = true;
+  }
+
+  if (isSourceRun) {
+    // 源码运行：在项目目录下创建 .shadow-config
+    shadowConfigDir = path.join(__dirname, '../../.shadow-config');
+  } else {
+    // npm 安装运行：在用户 home 目录下创建 .openhermit
+    const userHome = os.homedir();
+    shadowConfigDir = path.join(userHome, '.openhermit');
+  }
 
   // 生成 settings.json
   const settings = {
@@ -50,7 +70,7 @@ export function generateShadowConfig(ipcPort = DEFAULT_IPC_PORT) {
   const settingsPath = path.join(shadowConfigDir, 'settings.json');
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
 
-  logger.info({ configDir: shadowConfigDir, ipcPort }, '生成影子配置');
+  logger.info({ configDir: shadowConfigDir, ipcPort, isSourceRun }, '生成影子配置');
 
   return shadowConfigDir;
 }

@@ -117,7 +117,13 @@ class IPCServer {
         const handler = this.eventHandlers.get(hookType);
         if (handler) {
           try {
-            handler(data);
+            // 支持 async 处理器
+            const result = handler(data);
+            if (result && typeof result.catch === 'function') {
+              result.catch(error => {
+                logger.error({ hookType, error: error.message }, 'Hook 处理器执行失败');
+              });
+            }
           } catch (error) {
             logger.error({ hookType, error: error.message }, 'Hook 处理器执行失败');
           }

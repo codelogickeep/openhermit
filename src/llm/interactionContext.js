@@ -30,7 +30,7 @@ class InteractionContext {
       timestamp: Date.now()
     };
 
-    logger.debug({ id, analysisType: analysis?.type }, '📌 保存交互上下文');
+    logger.info({ id, analysisType: analysis?.type }, '📌 保存交互上下文');
   }
 
   /**
@@ -65,7 +65,9 @@ class InteractionContext {
    * @returns {boolean}
    */
   hasContext() {
-    return this.getContext() !== null;
+    const hasActive = this.getContext() !== null;
+    logger.debug({ hasActive, interactionId: this.activeInteraction?.id }, '🔍 检查交互上下文');
+    return hasActive;
   }
 }
 

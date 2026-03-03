@@ -5,10 +5,48 @@
 
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import logger from '../utils/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * 检测是否是源码运行
+ * @returns {boolean}
+ */
+function isSourceRun() {
+  try {
+    const packageJsonPath = path.join(__dirname, '../../package.json');
+    if (fs.existsSync(packageJsonPath)) {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      return !packageJson.bin;
+    }
+  } catch {}
+  return true;
+}
+
+/**
+ * 获取日志目录
+ * @returns {string} 日志目录路径
+ */
+function getLogDir() {
+  // 源码运行：在源码根目录下创建 .openhermit/logs
+  if (isSourceRun()) {
+    const sourceLogDir = path.join(__dirname, '../../.openhermit/logs');
+    if (!fs.existsSync(sourceLogDir)) {
+      fs.mkdirSync(sourceLogDir, { recursive: true });
+    }
+    return sourceLogDir;
+  }
+
+  // npm 安装：在用户 home 目录下创建 .openhermit/logs
+  const userLogDir = path.join(os.homedir(), '.openhermit', 'logs');
+  if (!fs.existsSync(userLogDir)) {
+    fs.mkdirSync(userLogDir, { recursive: true });
+  }
+  return userLogDir;
+}
 
 /**
  * 终端输出日志管理类
@@ -35,7 +73,9 @@ export class TerminalLogger {
     const minute = String(now.getMinutes()).padStart(2, '0');
     const second = String(now.getSeconds()).padStart(2, '0');
     const timestamp = `${year}${month}${day}-${hour}${minute}${second}`;
-    return path.join(process.cwd(), `claude-terminal-${timestamp}.log`);
+
+    const logDir = getLogDir();
+    return path.join(logDir, `claude-terminal-${timestamp}.log`);
   }
 
   /**

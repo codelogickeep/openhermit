@@ -12,5 +12,11 @@ coverage/
 # Claude settings
 .claude/settings.local.json
 
+# Shadow config for hooks
+.shadow-config/
+
+# OpenHermit runtime files
+.openhermit/
+
 # Local docs (not tracked)
 docs/

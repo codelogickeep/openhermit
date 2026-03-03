@@ -103,12 +103,12 @@ export class MessageHandler {
       // 检测 /exit 命令：退出 Claude Code 后需要清理缓冲区
       const isExitCommand = trimmed === '/exit' || trimmed.toLowerCase() === 'exit';
 
-      // 检查是否有交互上下文（非标准交互）
+      // 检查是否有交互上下文（用户正在回复选择/确认等）
       if (interactionContext.hasContext() && smartMode) {
         // 有上下文，用 LLM 解析用户回复
-        this.handleContextualReply(trimmed, context);
+        await this.handleContextualReply(trimmed, context);
       } else {
-        // 无上下文，直接写入
+        // 无上下文，直接写入 PTY
         writeCommand(trimmed);
 
         // 发送状态反馈给用户

@@ -1,6 +1,6 @@
 {
   "name": "@codelogickeep/open-hermit",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "OpenHermit (开源寄居蟹) - A Lightweight Remote PTY Bridge for Claude Code & Local AI Agents. OpenHermit 不生产指令，只是跨越屏幕的指令搬运工。隐于后台，行于指尖，把最强的大脑搬进你的口袋，让你随时随地无感接管 AI Coding 工作站。",
   "main": "src/index.js",
   "bin": {

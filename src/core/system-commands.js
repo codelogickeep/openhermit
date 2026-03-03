@@ -3,6 +3,7 @@
  * 负责处理 OpenHermit 系统命令（- 前缀）
  */
 
+import { exec } from 'child_process';
 import logger from '../utils/logger.js';
 
 /**
@@ -24,7 +25,7 @@ export class SystemCommands {
         this.handleCd(args, context);
         break;
       case 'ls':
-        this.handleLs(context);
+        this.handleLs(args, context);
         break;
       case 'claude':
         this.handleClaude(args, context);
@@ -110,11 +111,46 @@ export class SystemCommands {
 
   /**
    * 处理 -ls 命令
+   * @param {string} args - 可选的 ls 参数（如 -al）
    * @param {object} context - 上下文对象
    */
-  handleLs(context) {
+  handleLs(args, context) {
     const { channel, pty } = context;
-    channel.sendDirList(pty.getWorkingDir());
+
+    // 如果有参数，执行实际的 ls 命令
+    if (args && args.trim()) {
+      const workingDir = pty.getWorkingDir();
+      const command = `ls ${args}`;
+
+      exec(command, { cwd: workingDir, timeout: 30000 }, (error, stdout, stderr) => {
+        if (error) {
+          channel.send(`❌ 命令执行失败:\n\`\`\`\n${error.message}\n\`\`\``, { immediate: true });
+          return;
+        }
+
+        let result = '';
+        if (stdout) {
+          result += stdout;
+        }
+        if (stderr) {
+          result += `\n[stderr]\n${stderr}`;
+        }
+
+        if (!result.trim()) {
+          result = '(命令执行成功，无输出)';
+        }
+
+        // 限制输出长度
+        if (result.length > 3000) {
+          result = result.slice(0, 3000) + '\n... (输出已截断)';
+        }
+
+        channel.send(`## 💻 命令结果\n\n\`\`\`bash\n$ ${command}\n\`\`\`\n\n\`\`\`\n${result}\n\`\`\``, { immediate: true });
+      });
+    } else {
+      // 没有参数，显示目录列表（原有行为）
+      channel.sendDirList(pty.getWorkingDir());
+    }
   }
 
   /**

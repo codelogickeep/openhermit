@@ -1,7 +1,7 @@
 import pty from 'node-pty';
 import path from 'path';
 import fs from 'fs';
-import { buildEnv, getDefaultShell } from './envBuild.js';
+import { buildEnv, getDefaultShell, getIPCPort } from './envBuild.js';
 import { getAllowedRootDir } from '../config/index.js';
 import logger from '../utils/logger.js';
 
@@ -27,7 +27,11 @@ class PTYEngine {
       return;
     }
 
-    const env = buildEnv({ cwd: this.workingDir });
+    // 构建 PTY 环境变量，包含 Hook 配置
+    const env = buildEnv({
+      cwd: this.workingDir,
+      ipcPort: getIPCPort()
+    });
 
     logger.info({ shell: this.shell, cwd: this.workingDir }, '启动 PTY');
 

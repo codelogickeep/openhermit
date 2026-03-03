@@ -61,7 +61,7 @@ const { getMarkdownFormatter } = await import('./formatter/index.js');
 const { getLLMClient, getInteractionAnalyzer, getInteractionContext } = await import('./llm/index.js');
 
 // 导入核心模块
-const { TerminalLogger, TaskManager, SystemCommands, HitlController, MessageHandler } = await import('./core/index.js');
+const { TerminalLogger, TaskManager, SystemCommands, HitlController, MessageHandler, IPCServer, getIPCServer, HookHandler, getHookHandler, InteractionState } = await import('./core/index.js');
 
 // 全局异常处理
 process.on('unhandledRejection', (reason, promise) => {
@@ -104,6 +104,10 @@ class OpenHermit {
     this.systemCommands = new SystemCommands();
     this.hitlController = new HitlController();
     this.messageHandler = new MessageHandler();
+
+    // Hook 系统
+    this.ipcServer = getIPCServer();
+    this.hookHandler = getHookHandler();
 
     // HITL 状态
     this.hitlActive = false;
@@ -236,6 +240,55 @@ class OpenHermit {
   }
 
   /**
+   * 初始化 Hook 系统
+   * 启动 IPC Server 并注册事件处理
+   */
+  async initHookSystem() {
+    logger.info('正在初始化 Hook 系统...');
+
+    // 设置 Hook Handler 回调
+    this.hookHandler.setCallbacks({
+      onStateChange: (newState, oldState) => {
+        logger.info({ from: oldState, to: newState }, 'Hook 状态变更');
+        // 更新任务状态
+        if (newState === InteractionState.RUNNING) {
+          this.taskManager.status.isRunning = true;
+          this.taskManager.status.phase = 'executing';
+        } else if (newState === InteractionState.COMPLETED) {
+          this.taskManager.status.isRunning = false;
+          this.taskManager.status.phase = 'completed';
+        } else if (newState === InteractionState.WAITING_CONFIRM || newState === InteractionState.WAITING_INPUT) {
+          this.taskManager.status.phase = 'waiting';
+        }
+      },
+      onSendMessage: (msgData) => {
+        // 发送 Hook 事件消息到钉钉
+        logger.info({ type: msgData.type }, '📤 Hook 消息发送到钉钉');
+        this.channel.send(msgData.message, { immediate: true });
+
+        // 如果是完成消息，重置状态
+        if (msgData.type === 'completed') {
+          this.taskManager.reset();
+        }
+      }
+    });
+
+    // 注册 IPC 事件处理
+    this.ipcServer.on('pre-tool', (data) => this.hookHandler.handlePreToolUse(data));
+    this.ipcServer.on('notification', (data) => this.hookHandler.handleNotification(data));
+    this.ipcServer.on('stop', (data) => this.hookHandler.handleStop(data));
+
+    // 启动 IPC Server
+    try {
+      await this.ipcServer.start();
+      logger.info({ port: this.ipcServer.port }, '🔒 Hook IPC Server 已启动');
+    } catch (error) {
+      logger.error({ error: error.message }, 'IPC Server 启动失败');
+      // 不阻止应用启动，Hook 系统是可选的
+    }
+  }
+
+  /**
    * 初始化应用
    */
   async init() {
@@ -280,6 +333,9 @@ class OpenHermit {
     // 设置审批回调监听
     this.channel.on('approve', () => this.handleApprove());
     this.channel.on('reject', () => this.handleReject());
+
+    // 初始化 Hook 系统
+    await this.initHookSystem();
 
     // 启动 PTY
     this.pty.start();
