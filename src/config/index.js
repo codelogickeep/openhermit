@@ -115,6 +115,16 @@ export function getDashScopeModel() {
 }
 
 /**
+ * 获取 IPC 端口（可选）
+ * 用于 Claude Code Hooks 通信
+ * 默认使用 31337
+ */
+export function getIPCPort() {
+  const port = get('HERMIT_IPC_PORT', '31337');
+  return parseInt(port, 10);
+}
+
+/**
  * 检查环境依赖
  * @returns {object} 检查结果
  */
