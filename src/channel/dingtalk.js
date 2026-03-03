@@ -489,7 +489,7 @@ class DingTalkChannel extends EventEmitter {
             headers: { 'x-acs-dingtalk-access-token': accessToken }
           });
 
-          logger.debug({ status: response.status }, '✅ sessionWebhook 发送成功');
+          logger.info({ status: response.status }, '✅ sessionWebhook 发送成功');
           return;
         } catch (webhookError) {
           logger.warn({ error: webhookError.message }, 'sessionWebhook 发送失败，尝试降级推送');

@@ -397,16 +397,21 @@ class OpenHermit {
     // 更新最后输出时间
     this.lastOutputTime = Date.now();
 
-    // 重置超时完成检测定时器
-    this.taskManager.resetCompletionCheckTimer(
-      { smartMode: this.smartMode, waitingForUserReply: this.waitingForUserReply },
-      () => this.checkCompletionByLLM()
-    );
+    // 超时检测已禁用 - Hook 机制已经提供精确的状态通知
+    // 如果需要重新启用，取消下面的注释
+    // this.taskManager.resetCompletionCheckTimer(
+    //   { smartMode: this.smartMode, waitingForUserReply: this.waitingForUserReply },
+    //   () => this.checkCompletionByLLM()
+    // );
 
     // 使用延迟检测机制：等待输出稳定后再触发 LLM 分析
     // 任务完成后不触发，等待用户回复时不触发
+    // 只有 Claude Code 活跃时才触发 LLM 分析（内置命令产生的输出不触发）
     // 所有交互判断都交给 LLM 分析，不再使用规则预判
-    if (!isTaskCompleted && this.smartMode && !this.waitingForUserReply) {
+    const session = this.intentParser.getSession();
+    const isClaudeActive = session.mode === 'claude_active';
+
+    if (!isTaskCompleted && this.smartMode && !this.waitingForUserReply && isClaudeActive) {
       // 清除之前的定时器
       if (this.interactionCheckTimer) {
         clearTimeout(this.interactionCheckTimer);
