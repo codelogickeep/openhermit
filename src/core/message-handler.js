@@ -177,9 +177,8 @@ export class MessageHandler {
             channel.send(`${report}\n\n执行命令: \`${command}\``, { immediate: true });
           }
 
-          // 执行命令
+          // 执行命令（结果会在 executeShellCommand 中发送）
           logger.info({ command }, '执行 shell 命令');
-          channel.send(`💻 执行: \`${command}\``, { immediate: true });
           this.executeShellCommand(command, context);
           break;
         }

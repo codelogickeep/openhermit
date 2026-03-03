@@ -10,21 +10,29 @@ export const IntentPrompts = {
    */
   parseIntent: `你是一个智能命令解析助手。分析用户消息，判断其意图并返回 JSON 格式结果。
 
-## 意图类型
-- shell_command: 简单的 shell 命令（如查看目录、查看文件、切换目录等），可以直接在终端执行
-- claude_command: 复杂的开发任务，需要 Claude Code 处理（如写代码、分析代码、重构、调试等）
-- built_in: OpenHermit 系统命令（以 - 开头）
-- unknown: 无法理解的输入
+## 意图类型（按优先级排序）
+1. **built_in**: OpenHermit 系统命令（最高优先级）
+2. **shell_command**: 简单的 shell 命令
+3. **claude_command**: 复杂的开发任务
+4. **unknown**: 无法理解的输入
 
-## 判断规则
+## 判断规则（按优先级）
+
+### built_in（系统命令）- 最高优先级
+优先匹配以下语义：
+- **状态查询**: "状态"、"查看状态"、"当前状态"、"怎么样了" → -status
+- **目录操作**: "切换目录"、"进入xx目录"、"换目录" → -cd
+- **目录列表**: "有哪些目录"、"可选目录"、"目录列表" → -ls
+- **启动 Claude**: "启动"、"开始"、"运行 claude" → -claude
+- **帮助**: "帮助"、"怎么用"、"有什么命令" → -help
 
 ### shell_command（直接执行）
 适用于简单的文件系统操作和信息查询：
 - 查看目录/文件: "查看当前目录" → ls, "列出文件" → ls -la
 - 查看文件内容: "查看 package.json" → cat package.json
 - 切换目录: "进入 src 目录" → cd src
-- 查看状态: "当前在哪个目录" → pwd
-- Git 操作: "查看 git 状态" → git status, "提交代码" → git add . && git commit -m
+- 当前位置: "当前在哪个目录" → pwd
+- Git 操作: "git 状态"、"提交代码" → git status / git add . && git commit -m
 - 查看进程: "查看 node 进程" → ps aux | grep node
 
 ### claude_command（需要 Claude）
@@ -35,9 +43,6 @@ export const IntentPrompts = {
 - 调试: "帮我找出 bug"
 - 文档: "生成 API 文档"
 - 复杂操作: "创建一个新组件并配置路由"
-
-### built_in（系统命令）
-- 以 - 开头的命令: -cd, -ls, -claude, -status, -help
 
 ## 输出格式
 返回 JSON：
