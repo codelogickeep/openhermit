@@ -74,9 +74,28 @@ export class MessageHandler {
 
     // ==================== Claude 终端运行中 ====================
     if (isClaudeActive) {
-      // Bash 命令（! 前缀）- 需要安全检测
+      // -status 命令：特殊处理，获取 Claude 状态
+      if (trimmed === '-status') {
+        systemCommands.handle(trimmed, context);
+        return;
+      }
+
+      // 其他 - 前缀命令：提示用户
+      if (trimmed.startsWith('-')) {
+        channel.send(`⚠️ Claude 活跃时，系统命令需使用 \`!\` 前缀\n\n例如： \`!ls\` 查看目录`, { immediate: true });
+        return;
+      }
+
+      // 系统命令（! 前缀）- 需要安全检测
       if (trimmed.startsWith('!')) {
         const command = trimmed.slice(1).trim();
+        // 检查是否是内置命令
+        const cmd = command.split(/\s+/)[0].toLowerCase();
+        if (BUILTIN_COMMANDS.includes(cmd)) {
+          systemCommands.handle(`-${command}`, context);
+          return;
+        }
+        // 否则作为 shell 命令执行
         await this.handleBashCommandWithSecurity(command, context);
         return;
       }

@@ -575,6 +575,7 @@ class OpenHermit {
    * @param {object} metadata - 消息元数据
    */
   async handleChannelText(text, senderId, metadata = {}) {
+    logger.info({ text: text.substring(0, 50), senderId }, '📥 [index.js] handleChannelText 被调用');
     const context = this.getContext();
     await this.messageHandler.handleChannelText(text, senderId, context, metadata);
   }
