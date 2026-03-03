@@ -191,7 +191,26 @@ export class MessageHandler {
 
         case IntentTypes.BUILT_IN: {
           // 内置命令
-          const cmdStr = `-${intent.command}${intent.params?.args ? ' ' + intent.params.args : ''}`;
+          let cmdStr = intent.command;
+          // 确保有 - 前缀
+          if (!cmdStr.startsWith('-')) {
+            cmdStr = '-' + cmdStr;
+          }
+          // 添加参数
+          if (intent.params?.args) {
+            cmdStr += ' ' + intent.params.args;
+          }
+
+          // 安全检测
+          const securityResult = this.securityAnalyzer.analyzeCommandRisk(cmdStr);
+          if (securityResult.level === RiskLevel.CRITICAL) {
+            const report = this.securityAnalyzer.generateRiskReport(securityResult);
+            channel.send(report, { immediate: true });
+            logger.warn({ command: cmdStr, risks: securityResult.risks }, '内置命令被安全检测拒绝');
+            return;
+          }
+
+          logger.info({ command: cmdStr }, '执行内置命令');
           systemCommands.handle(cmdStr, context);
           break;
         }
