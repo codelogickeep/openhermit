@@ -184,8 +184,14 @@ class DingTalkChannel extends EventEmitter {
       logger.info({ msgId }, '✅ 消息已记录');
 
       let text = '';
+      let isVoiceMessage = false;
       if (data.text && data.text.content) {
         text = data.text.content;
+      } else if (data.text && data.text.recognition) {
+        // 语音消息：使用钉钉识别的文本
+        text = data.text.recognition;
+        isVoiceMessage = true;
+        logger.info({ recognition: text }, '🎤 收到语音消息');
       } else if (data.content) {
         text = data.content;
       }
@@ -202,7 +208,8 @@ class DingTalkChannel extends EventEmitter {
           this.hasWelcomed = true;
         }
 
-        this.emit('text', text, this.userId);
+        // 传递消息元数据（包括是否为语音消息）
+        this.emit('text', text, this.userId, { isVoiceMessage });
       }
 
       // 消息确认已通过 registerAllEventListener 的返回值处理

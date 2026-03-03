@@ -6,18 +6,27 @@
 import { exec } from 'child_process';
 import logger from '../utils/logger.js';
 import { IntentTypes } from '../intent/index.js';
+import { getSecurityAnalyzer, RiskLevel } from './security.js';
+
+// 内置命令列表
+const BUILTIN_COMMANDS = ['cd', 'ls', 'claude', 'status', 'help'];
 
 /**
  * 消息处理类
  */
 export class MessageHandler {
+  constructor() {
+    this.securityAnalyzer = getSecurityAnalyzer();
+  }
+
   /**
    * 处理钉钉收到的文本
    * @param {string} text - 文本内容
    * @param {string} senderId - 发送者 ID
    * @param {object} context - 上下文对象
+   * @param {object} metadata - 消息元数据
    */
-  async handleChannelText(text, senderId, context) {
+  async handleChannelText(text, senderId, context, metadata = {}) {
     const {
       channel,
       intentParser,
@@ -31,8 +40,12 @@ export class MessageHandler {
 
     const trimmed = text.trim();
 
-    // 打印接收日志
-    logger.info({ text: trimmed, senderId }, '收到钉钉消息');
+    // 打印接收日志（区分语音消息）
+    if (metadata.isVoiceMessage) {
+      logger.info({ text: trimmed, senderId }, '🎤 收到语音消息');
+    } else {
+      logger.info({ text: trimmed, senderId }, '收到钉钉消息');
+    }
 
     // 检测 ESC 指令：终止 Claude Code 当前任务
     if (trimmed.toLowerCase() === 'esc' || trimmed === '\x1b' || trimmed === 'escape') {
@@ -55,21 +68,19 @@ export class MessageHandler {
       return;
     }
 
-    // OpenHermit 系统命令（- 前缀）
-    if (trimmed.startsWith('-')) {
-      systemCommands.handle(trimmed, context);
-      return;
-    }
-
-    // Bash 命令（! 前缀）- 在工作目录中执行
-    if (trimmed.startsWith('!')) {
-      this.handleBashCommand(trimmed.slice(1).trim(), context);
-      return;
-    }
-
-    // 其他所有内容：转发给 Claude 终端
+    // 获取当前会话状态
     const session = intentParser.getSession();
-    if (session.mode === 'claude_active') {
+    const isClaudeActive = session.mode === 'claude_active';
+
+    // ==================== Claude 终端运行中 ====================
+    if (isClaudeActive) {
+      // Bash 命令（! 前缀）- 需要安全检测
+      if (trimmed.startsWith('!')) {
+        const command = trimmed.slice(1).trim();
+        await this.handleBashCommandWithSecurity(command, context);
+        return;
+      }
+
       // 检测 /exit 命令：退出 Claude Code 后需要清理缓冲区
       const isExitCommand = trimmed === '/exit' || trimmed.toLowerCase() === 'exit';
 
@@ -89,10 +100,184 @@ export class MessageHandler {
       if (isExitCommand) {
         clearClaudeSession(context);
       }
-    } else {
-      // Claude 未启动：提示错误
-      channel.send(`⚠️ Claude 终端未启动\n\n使用 \`-claude\` 启动，或发送 \`-help\` 查看帮助`, { immediate: true });
+      return;
     }
+
+    // ==================== Claude 终端未运行（Idle 模式）====================
+    // OpenHermit 系统命令（- 前缀）
+    if (trimmed.startsWith('-')) {
+      const cmd = trimmed.slice(1).trim().split(/\s+/)[0].toLowerCase();
+
+      // 如果是内置命令，直接执行
+      if (BUILTIN_COMMANDS.includes(cmd)) {
+        systemCommands.handle(trimmed, context);
+        return;
+      }
+
+      // 非内置命令，使用 LLM 意图识别
+      if (smartMode) {
+        await this.handleWithLLMIntent(trimmed, context);
+        return;
+      }
+
+      // 无智能模式，提示未知命令
+      channel.send(`❌ 未知命令: \`-${cmd}\`\n\n使用 \`-help\` 查看可用命令。`, { immediate: true });
+      return;
+    }
+
+    // Bash 命令（! 前缀）- 需要安全检测
+    if (trimmed.startsWith('!')) {
+      const command = trimmed.slice(1).trim();
+      await this.handleBashCommandWithSecurity(command, context);
+      return;
+    }
+
+    // 无前缀消息：使用 LLM 意图识别
+    if (smartMode) {
+      await this.handleWithLLMIntent(trimmed, context);
+      return;
+    }
+
+    // 无智能模式，提示启动 Claude
+    channel.send(`⚠️ Claude 终端未启动\n\n使用 \`-claude\` 启动，或发送 \`-help\` 查看帮助`, { immediate: true });
+  }
+
+  /**
+   * 使用 LLM 进行意图识别并处理
+   * @param {string} userMessage - 用户消息
+   * @param {object} context - 上下文对象
+   */
+  async handleWithLLMIntent(userMessage, context) {
+    const { channel, intentParser, llmClient, pty, writeCommand, systemCommands } = context;
+
+    try {
+      logger.info({ message: userMessage }, '🤖 使用 LLM 进行意图识别');
+
+      // 使用 LLM 客户端进行意图解析
+      const intent = await llmClient.parseIntent(userMessage);
+      logger.info({ intent }, '意图解析结果');
+
+      switch (intent.type) {
+        case IntentTypes.SHELL_COMMAND: {
+          // Shell 命令：执行前进行安全检测
+          const command = intent.command;
+          const securityResult = this.securityAnalyzer.analyzeCommandRisk(command);
+
+          if (securityResult.level === RiskLevel.CRITICAL) {
+            // 拒绝执行
+            const report = this.securityAnalyzer.generateRiskReport(securityResult);
+            channel.send(report, { immediate: true });
+            logger.warn({ command, risks: securityResult.risks }, '命令被安全检测拒绝');
+            return;
+          }
+
+          if (securityResult.level === RiskLevel.HIGH) {
+            // 高风险：需要用户确认（TODO: 集成 HITL）
+            const report = this.securityAnalyzer.generateRiskReport(securityResult);
+            channel.send(`${report}\n\n执行命令: \`${command}\``, { immediate: true });
+          }
+
+          // 执行命令
+          logger.info({ command }, '执行 shell 命令');
+          channel.send(`💻 执行: \`${command}\``, { immediate: true });
+          this.executeShellCommand(command, context);
+          break;
+        }
+
+        case IntentTypes.CLAUDE_COMMAND: {
+          // Claude 命令：启动 Claude 并传入任务
+          this.executeClaudeCommand(intent.command, { explicit: true }, context);
+          break;
+        }
+
+        case IntentTypes.BUILT_IN: {
+          // 内置命令
+          const cmdStr = `-${intent.command}${intent.params?.args ? ' ' + intent.params.args : ''}`;
+          systemCommands.handle(cmdStr, context);
+          break;
+        }
+
+        default: {
+          // 未知意图：默认作为 Claude 命令
+          logger.warn({ intent }, '未知意图类型，默认作为 Claude 命令处理');
+          this.executeClaudeCommand(userMessage, { explicit: true }, context);
+        }
+      }
+    } catch (error) {
+      logger.error({ error: error.message }, 'LLM 意图识别失败');
+      // 降级：作为 Claude 命令处理
+      this.executeClaudeCommand(userMessage, { explicit: true }, context);
+    }
+  }
+
+  /**
+   * 执行 Shell 命令
+   * @param {string} command - 命令
+   * @param {object} context - 上下文对象
+   */
+  executeShellCommand(command, context) {
+    const { channel, pty } = context;
+    const workingDir = pty.getWorkingDir();
+
+    exec(command, { cwd: workingDir, timeout: 30000 }, (error, stdout, stderr) => {
+      if (error) {
+        channel.send(`❌ 命令执行失败:\n\`\`\`\n${error.message}\n\`\`\``, { immediate: true });
+        return;
+      }
+
+      let result = '';
+      if (stdout) {
+        result += stdout;
+      }
+      if (stderr) {
+        result += `\n[stderr]\n${stderr}`;
+      }
+
+      if (!result.trim()) {
+        result = '(命令执行成功，无输出)';
+      }
+
+      // 限制输出长度
+      if (result.length > 3000) {
+        result = result.slice(0, 3000) + '\n... (输出已截断)';
+      }
+
+      channel.send(`## 💻 命令结果\n\n\`\`\`bash\n$ ${command}\n\`\`\`\n\n\`\`\`\n${result}\n\`\`\``, { immediate: true });
+    });
+  }
+
+  /**
+   * 处理 Bash 命令（带安全检测）
+   * @param {string} command - 要执行的命令
+   * @param {object} context - 上下文对象
+   */
+  async handleBashCommandWithSecurity(command, context) {
+    const { channel, pty } = context;
+
+    if (!command) {
+      channel.send('用法: `!<命令>` - 在工作目录中执行 bash 命令', { immediate: true });
+      return;
+    }
+
+    // 安全检测
+    const securityResult = this.securityAnalyzer.analyzeCommandRisk(command);
+
+    if (securityResult.level === RiskLevel.CRITICAL) {
+      // 拒绝执行
+      const report = this.securityAnalyzer.generateRiskReport(securityResult);
+      channel.send(report, { immediate: true });
+      logger.warn({ command, risks: securityResult.risks }, 'Bash 命令被安全检测拒绝');
+      return;
+    }
+
+    if (securityResult.level === RiskLevel.HIGH) {
+      // 高风险：警告用户但继续执行（TODO: 集成 HITL 确认）
+      const report = this.securityAnalyzer.generateRiskReport(securityResult);
+      channel.send(`${report}\n\n⚠️ 继续执行...`, { immediate: true });
+    }
+
+    // 执行命令
+    this.executeShellCommand(command, context);
   }
 
   /**
@@ -154,50 +339,6 @@ export class MessageHandler {
       context.lastAnalyzedPosition = 0;
       writeCommand(userReply);
     }
-  }
-
-  /**
-   * 处理 Bash 命令（! 前缀）
-   * @param {string} command - 要执行的命令
-   * @param {object} context - 上下文对象
-   */
-  handleBashCommand(command, context) {
-    const { channel, pty } = context;
-
-    if (!command) {
-      channel.send('用法: `!<命令>` - 在工作目录中执行 bash 命令', { immediate: true });
-      return;
-    }
-
-    const workingDir = pty.getWorkingDir();
-
-    logger.info({ command, workingDir }, '执行 Bash 命令');
-
-    exec(command, { cwd: workingDir, timeout: 30000 }, (error, stdout, stderr) => {
-      if (error) {
-        channel.send(`❌ 命令执行失败:\n\`\`\`\n${error.message}\n\`\`\``, { immediate: true });
-        return;
-      }
-
-      let result = '';
-      if (stdout) {
-        result += stdout;
-      }
-      if (stderr) {
-        result += `\n[stderr]\n${stderr}`;
-      }
-
-      if (!result.trim()) {
-        result = '(命令执行成功，无输出)';
-      }
-
-      // 限制输出长度
-      if (result.length > 3000) {
-        result = result.slice(0, 3000) + '\n... (输出已截断)';
-      }
-
-      channel.send(`## 💻 命令结果\n\n\`\`\`bash\n$ ${command}\n\`\`\`\n\n\`\`\`\n${result}\n\`\`\``, { immediate: true });
-    });
   }
 
   /**

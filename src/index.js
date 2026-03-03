@@ -275,7 +275,7 @@ class OpenHermit {
     });
 
     // 设置通道消息监听
-    this.channel.on('text', (text, senderId) => this.handleChannelText(text, senderId));
+    this.channel.on('text', (text, senderId, metadata) => this.handleChannelText(text, senderId, metadata));
 
     // 设置审批回调监听
     this.channel.on('approve', () => this.handleApprove());
@@ -567,10 +567,11 @@ class OpenHermit {
    * 处理钉钉收到的文本
    * @param {string} text - 文本内容
    * @param {string} senderId - 发送者 ID
+   * @param {object} metadata - 消息元数据
    */
-  async handleChannelText(text, senderId) {
+  async handleChannelText(text, senderId, metadata = {}) {
     const context = this.getContext();
-    await this.messageHandler.handleChannelText(text, senderId, context);
+    await this.messageHandler.handleChannelText(text, senderId, context, metadata);
   }
 
   /**

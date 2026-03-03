@@ -8,7 +8,8 @@ export const IntentTypes = {
   CLAUDE_COMMAND: 'claude_command',   // 需要启动 Claude Code
   SHELL_COMMAND: 'shell_command',     // 直接 shell 命令
   BUILT_IN: 'built_in',               // 内置命令 (/cd, /ls, /restart)
-  CONVERSATION: 'conversation'        // 对话交互（选择回复等）
+  CONVERSATION: 'conversation',       // 对话交互（选择回复等）
+  UNKNOWN: 'unknown'                  // 无法识别的意图
 };
 
 /**
