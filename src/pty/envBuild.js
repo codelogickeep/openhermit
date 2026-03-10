@@ -38,7 +38,7 @@ function copyOriginalConfigFiles(targetDir) {
     return;
   }
 
-  // 需要复制的配置文件（不包含 settings.json，因为我们有自己的配置）
+  // 需要复制的配置文件（不包含 settings.json，我们会单独合并它）
   const configFiles = [
     'credentials.json',      // 登录凭据（重要！）
     'projects.json',         // 项目配置
@@ -65,6 +65,51 @@ function copyOriginalConfigFiles(targetDir) {
   }
 
   logger.info({ copiedCount, originalDir, targetDir }, '📋 复制原始配置文件到影子目录');
+}
+
+/**
+ * 读取用户原始的 settings.json
+ * @returns {object} 用户原始配置
+ */
+function loadOriginalSettings() {
+  const originalDir = getOriginalClaudeConfigDir();
+  const settingsPath = path.join(originalDir, 'settings.json');
+
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const content = fs.readFileSync(settingsPath, 'utf-8');
+      const settings = JSON.parse(content);
+      logger.info({
+        hasEnv: !!settings.env,
+        envKeys: settings.env ? Object.keys(settings.env) : []
+      }, '📋 读取用户原始 settings.json');
+      return settings;
+    } catch (error) {
+      logger.warn({ error: error.message }, '读取用户原始 settings.json 失败');
+    }
+  }
+
+  return {};
+}
+
+/**
+ * 深度合并对象（用于合并 settings.json）
+ * @param {object} target - 目标对象
+ * @param {object} source - 源对象
+ * @returns {object} 合并后的对象
+ */
+function deepMerge(target, source) {
+  const result = { ...target };
+
+  for (const key of Object.keys(source)) {
+    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+      result[key] = deepMerge(result[key] || {}, source[key]);
+    } else {
+      result[key] = source[key];
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -123,11 +168,21 @@ export function generateShadowConfig(ipcPort = DEFAULT_IPC_PORT) {
   // ⚠️ 重要：复制用户原始配置文件（包括登录凭据）
   copyOriginalConfigFiles(shadowConfigDir);
 
-  // 写入 settings.json
-  const settingsPath = path.join(shadowConfigDir, 'settings.json');
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  // ⚠️ 关键：读取用户原始 settings.json 并合并 hooks 配置
+  const originalSettings = loadOriginalSettings();
+  const mergedSettings = deepMerge(originalSettings, settings);
 
-  logger.info({ configDir: shadowConfigDir, ipcPort, isSourceRun }, '生成影子配置');
+  // 写入合并后的 settings.json
+  const settingsPath = path.join(shadowConfigDir, 'settings.json');
+  fs.writeFileSync(settingsPath, JSON.stringify(mergedSettings, null, 2));
+
+  logger.info({
+    configDir: shadowConfigDir,
+    ipcPort,
+    isSourceRun,
+    hasEnv: !!mergedSettings.env,
+    envKeys: mergedSettings.env ? Object.keys(mergedSettings.env) : []
+  }, '📝 生成影子配置（已合并用户原始配置）');
 
   return shadowConfigDir;
 }
@@ -199,10 +254,13 @@ export function buildEnv(options = {}) {
     // 注入 IPC 端口（供 Hook 脚本使用）
     env.HERMIT_IPC_PORT = String(ipcPort);
 
-    logger.debug({
-      claudeConfigDir: env.CLAUDE_CONFIG_DIR,
-      hermitIpcPort: env.HERMIT_IPC_PORT
-    }, '注入影子配置环境变量');
+    // 调试：打印关键环境变量
+    logger.info({
+      CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR,
+      HERMIT_IPC_PORT: env.HERMIT_IPC_PORT,
+      ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ? `${env.ANTHROPIC_API_KEY.slice(0, 10)}...` : undefined,
+      ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL
+    }, '🔑 PTY 环境变量（关键配置）');
   }
 
   return env;
