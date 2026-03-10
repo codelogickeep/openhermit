@@ -18,6 +18,22 @@ class LLMInteractionAnalyzer {
   }
 
   /**
+   * 提取选项区域（用于调试）
+   * @param {string} terminalOutput - 终端输出
+   * @returns {string} 选项区域内容
+   */
+  extractOptionArea(terminalOutput) {
+    const lines = terminalOutput.split('\n');
+    const optionStartIndex = lines.findIndex(line => /\d+\.\s/.test(line) || /[❯→]/.test(line));
+    if (optionStartIndex === -1) return '未找到选项';
+
+    // 提取选项区域前后 10 行
+    const start = Math.max(0, optionStartIndex - 2);
+    const end = Math.min(lines.length, optionStartIndex + 15);
+    return lines.slice(start, end).join('\n');
+  }
+
+  /**
    * 分析终端输出
    * @param {string} terminalOutput - 终端输出
    * @returns {Promise<object>} 分析结果
@@ -28,13 +44,23 @@ class LLMInteractionAnalyzer {
       try {
         const prompt = InteractionPrompts.analyzeOutput.replace('{{terminalOutput}}', terminalOutput);
 
-        // 打印发送给 LLM 的内容（更详细）
+        // 打印发送给 LLM 的内容（非常详细，用于调试）
+        // 找到选项相关的行
+        const allLines = terminalOutput.split('\n');
+        const optionLines = allLines.filter(line => /[❯→✔]|\d+\.\s/.test(line)).slice(0, 10);
+
         logger.info({
           terminalOutputLength: terminalOutput.length,
           terminalOutputPreview: terminalOutput.slice(-500),
-          // 打印选项相关的行（用于调试空格问题）
-          optionLines: terminalOutput.split('\n').filter(line => /[❯→✔]/.test(line)).slice(0, 5)
-        }, '📤 发送给 LLM 分析的内容');
+          // 打印选项相关的行（用于调试）
+          optionLines: optionLines,
+          // 打印包含数字的行（用于调试 defaultOptionIndex 识别）
+          linesWithNumbers: allLines.filter(line => /\d+\./.test(line)).slice(0, 10),
+          // 打印包含 ❯ 的行（关键！）
+          linesWithArrow: allLines.filter(line => /❯|→/.test(line)).slice(0, 5),
+          // 打印选项区域的完整内容（前后10行）
+          optionAreaContext: this.extractOptionArea(terminalOutput)
+        }, '📤 发送给 LLM 分析的内容（详细调试）');
 
         const response = await this.llmClient.chat(prompt, {
           temperature: 0.2,
