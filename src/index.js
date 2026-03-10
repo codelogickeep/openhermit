@@ -184,11 +184,11 @@ class OpenHermit {
       taskStatus: this.taskManager.status,
 
       // 子模块
-      taskManager: this.taskManager
-      terminalLogger: this.terminalLogger
-      systemCommands: this.systemCommands
-      hitlController: this.hitlController
-      hookHandler: this.hookHandler
+      taskManager: this.taskManager,
+      terminalLogger: this.terminalLogger,
+      systemCommands: this.systemCommands,
+      hitlController: this.hitlController,
+      hookHandler: this.hookHandler,
 
       // app 引用（用于安全确认执行）
       app: this,
