@@ -128,7 +128,8 @@ class LLMInteractionAnalyzer {
     if (!interactionContext) {
       return {
         understood: true,
-        input: userReply.trim()
+        input: userReply.trim(),
+        selectionType: 'text'
       };
     }
 
@@ -150,7 +151,25 @@ class LLMInteractionAnalyzer {
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const result = JSON.parse(jsonMatch[0]);
-          logger.debug({ result }, '🤖 LLM 解析用户回复成功');
+          logger.info({ result }, '🤖 LLM 解析用户回复成功');
+
+          // 如果是方向键选择模式，生成正确的输入序列
+          if (result.selectionType === 'arrow' && result.arrowCount !== undefined) {
+            const arrowCount = result.arrowCount || 0;
+            let input = '';
+            for (let i = 0; i < arrowCount; i++) {
+              input += '\x1b[B';  // 下箭头
+            }
+            input += '\r';  // 回车确认
+            result.input = input;
+            result.feedback = result.feedback || `已选择第 ${arrowCount + 1} 个选项`;
+          } else if (result.selectionType === 'number' && result.input) {
+            // 数字选择模式，确保有回车
+            if (!result.input.includes('\r')) {
+              result.input = result.input.trim() + '\r';
+            }
+          }
+
           return result;
         }
       } catch (error) {
@@ -161,7 +180,8 @@ class LLMInteractionAnalyzer {
     // 降级：直接返回用户输入
     return {
       understood: true,
-      input: userReply.trim()
+      input: userReply.trim(),
+      selectionType: 'text'
     };
   }
 

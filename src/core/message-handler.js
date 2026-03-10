@@ -344,7 +344,7 @@ export class MessageHandler {
    * @param {object} context - 上下文对象
    */
   async handleContextualReply(userReply, context) {
-    const { channel, interactionAnalyzer, interactionContext, writeCommand } = context;
+    const { channel, interactionAnalyzer, interactionContext, pty } = context;
 
     try {
       logger.info('🤖 解析带上下文的用户回复');
@@ -372,8 +372,25 @@ export class MessageHandler {
 
       // 发送解析结果到 PTY
       if (result.understood && result.input) {
-        logger.info({ input: result.input }, '✅ LLM 解析用户回复成功');
-        writeCommand(result.input);
+        logger.info({
+          input: result.input.replace(/\x1b/g, '\\e').replace(/\r/g, '\\r'),
+          selectionType: result.selectionType
+        }, '✅ LLM 解析用户回复成功');
+
+        // 根据选择类型发送到 PTY
+        if (result.selectionType === 'arrow') {
+          // 方向键选择模式：直接写入完整序列（方向键 + 回车）
+          pty.write(result.input);
+        } else if (result.selectionType === 'number') {
+          // 数字选择模式：直接写入数字和回车
+          pty.write(result.input);
+        } else {
+          // 文本模式：使用 writeCommand（会延迟发送回车）
+          pty.write(result.input);
+          if (!result.input.includes('\r')) {
+            setTimeout(() => pty.write('\r'), 100);
+          }
+        }
 
         // 可选：给用户反馈
         if (result.feedback) {
@@ -382,7 +399,8 @@ export class MessageHandler {
       } else {
         // 无法理解，直接发送原始输入
         logger.warn('LLM 无法理解用户回复，使用原始输入');
-        writeCommand(userReply);
+        pty.write(userReply);
+        setTimeout(() => pty.write('\r'), 100);
       }
     } catch (error) {
       logger.error({ error: error.message }, '解析用户回复失败');
@@ -395,7 +413,8 @@ export class MessageHandler {
       }
       context.lastInteractionBufferEnd = 0;
       context.lastAnalyzedPosition = 0;
-      writeCommand(userReply);
+      pty.write(userReply);
+      setTimeout(() => pty.write('\r'), 100);
     }
   }
 

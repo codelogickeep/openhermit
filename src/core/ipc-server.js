@@ -106,11 +106,13 @@ class IPCServer {
           data = JSON.parse(body);
         }
 
-        // 记录接收到的 Hook 事件
+        // 记录接收到的 Hook 事件（完整数据）
         logger.info({
           hookType,
           toolName: data.tool_name,
-          dataSize: body.length
+          sessionId: data.session_id,
+          dataSize: body.length,
+          rawData: data
         }, '📥 收到 Hook 事件');
 
         // 调用对应的事件处理器
