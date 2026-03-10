@@ -162,15 +162,11 @@ class DingTalkChannel extends EventEmitter {
     try {
       const data = JSON.parse(res.data);
 
-      // 打印钉钉原始消息数据（用于调试）
-      logger.info({
-        msgId: data.msgId,
-        messageId: data.messageId,
-        createAt: data.createAt,
-        senderId: data.senderId,
-        senderStaffId: data.senderStaffId,
-        text: data.text?.content || data.text?.recognition || data.content
-      }, '钉钉原始消息');
+      // ===== 调试：打印完整的钉钉原始消息结构 =====
+      console.log('\n' + '='.repeat(80));
+      console.log('📥 钉钉原始消息完整结构:');
+      console.log(JSON.stringify(data, null, 2));
+      console.log('='.repeat(80));
 
       // 消息去重：使用消息 ID 防止重复处理
       const msgId = data.msgId || data.messageId || `${data.senderId}_${data.createAt || Date.now()}`;
@@ -183,18 +179,49 @@ class DingTalkChannel extends EventEmitter {
       this.processedMsgIds.add(msgId);
       logger.info({ msgId }, '✅ 消息已记录');
 
+      // 提取文本内容（根据消息类型）
       let text = '';
       let isVoiceMessage = false;
-      if (data.text && data.text.content) {
-        text = data.text.content;
-      } else if (data.text && data.text.recognition) {
-        // 语音消息：使用钉钉识别的文本
-        text = data.text.recognition;
+      const msgtype = data.msgtype;
+
+      // ===== 优先处理语音消息 =====
+      if (msgtype === 'audio' && data.content?.recognition != null) {
+        // 语音消息（新格式）：msgtype=audio, content.recognition
+        text = String(data.content.recognition);
         isVoiceMessage = true;
-        logger.info({ recognition: text }, '🎤 收到语音消息');
-      } else if (data.content) {
-        text = data.content;
+        logger.info({ recognition: text }, '🎤 收到语音消息（audio 格式）');
+      } else if (data.text?.recognition != null) {
+        // 语音消息（旧格式）：text.recognition
+        text = String(data.text.recognition);
+        isVoiceMessage = true;
+        logger.info({ recognition: text }, '🎤 收到语音消息（text.recognition 格式）');
+      } else if (data.content?.recognition != null) {
+        // 语音消息（降级）：content.recognition（无 msgtype）
+        text = String(data.content.recognition);
+        isVoiceMessage = true;
+        logger.info({ recognition: text }, '🎤 收到语音消息（content.recognition 降级）');
       }
+      // ===== 处理文本消息 =====
+      else if (typeof data.content === 'string' && data.content) {
+        // 文本消息（新格式）：content 字符串
+        text = data.content;
+      } else if (data.text?.content && typeof data.text.content === 'string') {
+        // 文本消息（旧格式）：text.content 字符串
+        text = data.text.content;
+      } else if (typeof data.text === 'string' && data.text) {
+        // 文本消息（降级）：text 字符串
+        text = data.text;
+      } else {
+        // 其他消息类型（图片、文件等）
+        logger.info({ msgtype, dataKeys: Object.keys(data) }, '收到非文本消息类型');
+      }
+
+      // 打印解析结果
+      logger.info({
+        msgtype,
+        isVoiceMessage,
+        extractedText: text || '(空)'
+      }, '📋 消息解析结果');
 
       // 确保 text 是字符串类型
       if (text && typeof text !== 'string') {
