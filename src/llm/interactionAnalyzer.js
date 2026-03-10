@@ -72,6 +72,45 @@ class LLMInteractionAnalyzer {
   }
 
   /**
+   * 生成带延迟的 PTY 写入函数序列
+   * @param {Array} steps - 操作步骤数组
+   * @param {number} delayMs - 每步之间的延迟（毫秒）
+   * @returns {Array<{input: string, delay: number}>} 带延迟的写入序列
+   */
+  generateSteppedInput(steps, delayMs = 50) {
+    const sequence = [];
+
+    for (const step of steps) {
+      switch (step.action) {
+        case 'arrow_down': {
+          const count = step.count ?? 1;
+          for (let i = 0; i < count; i++) {
+            sequence.push({ input: '\x1b[B', delay: delayMs });
+          }
+          break;
+        }
+        case 'arrow_up': {
+          const count = step.count ?? 1;
+          for (let i = 0; i < count; i++) {
+            sequence.push({ input: '\x1b[A', delay: delayMs });
+          }
+          break;
+        }
+        case 'type':
+          sequence.push({ input: step.text || '', delay: delayMs });
+          break;
+        case 'enter':
+          sequence.push({ input: '\r', delay: 0 });  // 最后一步不需要延迟
+          break;
+        default:
+          logger.warn({ action: step.action }, '未知的操作类型');
+      }
+    }
+
+    return sequence;
+  }
+
+  /**
    * 分析终端输出
    * @param {string} terminalOutput - 终端输出
    * @returns {Promise<object>} 分析结果

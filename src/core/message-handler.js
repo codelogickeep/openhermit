@@ -378,9 +378,18 @@ export class MessageHandler {
         }, '✅ LLM 解析用户回复成功');
 
         // 根据选择类型发送到 PTY
-        if (result.selectionType === 'arrow') {
-          // 方向键选择模式：直接写入完整序列（方向键 + 回车）
-          pty.write(result.input);
+        if (result.selectionType === 'arrow' && result.steps) {
+          // 方向键选择模式：步进写入，每次按键之间添加延迟
+          const steppedInput = interactionAnalyzer.generateSteppedInput(result.steps, 50);
+          logger.info({ steppedInput: steppedInput.map(s => ({ input: s.input.replace(/\x1b/g, '\\e').replace(/\r/g, '\\r'), delay: s.delay })) }, '🎹 步进写入 PTY');
+
+          let totalDelay = 0;
+          for (const step of steppedInput) {
+            setTimeout(() => {
+              pty.write(step.input);
+            }, totalDelay);
+            totalDelay += step.delay;
+          }
         } else if (result.selectionType === 'number') {
           // 数字选择模式：直接写入数字和回车
           pty.write(result.input);
