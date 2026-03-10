@@ -19,6 +19,8 @@ export const InteractionPrompts = {
 {
   "needsInteraction": true/false,
   "type": "selection | text_input | confirmation | none",
+  "selectionType": "arrow | number | confirm",
+  "defaultOptionIndex": 1,
   "taskCompleted": true/false,
   "context": {
     "question": "Claude 正在问用户什么问题？（简洁明了，不超过100字）",
@@ -26,6 +28,24 @@ export const InteractionPrompts = {
     "additionalInfo": "其他有用的上下文信息（可选）"
   }
 }
+
+## 重要：识别选择类型
+
+1. **方向键选择模式 (arrow)**：终端输出中有以下标记之一：
+   - ❯ 或 → 标记当前选项
+   - ✔ 或 ✓ 标记默认选项
+   - 选项前面有特殊符号指示当前选中
+   - 例如：❯ 1. Dark mode ✔
+
+2. **数字选择模式 (number)**：选项只是简单的数字列表，没有选中标记
+   - 例如：1. 创建新文件\n2. 修改现有文件
+
+3. **确认模式 (confirm)**：y/n 确认
+   - 例如：(y/n) 或 [Y/n]
+
+## defaultOptionIndex
+仅方向键模式需要，表示当前默认选中的选项索引（从1开始）。
+例如：❯ 1. Dark mode ✔ 表示默认选中的是第1个选项。
 
 判断标准：
 1. needsInteraction: 如果 Claude 正在等待用户输入，设为 true
@@ -35,9 +55,11 @@ export const InteractionPrompts = {
    - text_input: 需要用户输入自由文本
    - confirmation: y/n 确认
    - none: Claude 正在思考或执行任务，不需要用户输入
-4. options: 仅当 type 为 selection 时，提取选项列表
-5. question: 提取 Claude 正在问的问题
-6. 只返回 JSON，不要其他内容`,
+4. selectionType: arrow | number | confirm（仅 type 为 selection 或 confirmation 时需要）
+5. defaultOptionIndex: 默认选中的选项索引（仅方向键模式需要）
+6. options: 仅当 type 为 selection 时，提取选项列表
+7. question: 提取 Claude 正在问的问题
+8. 只返回 JSON，不要其他内容`,
 
   /**
    * 用户回复解析 Prompt
@@ -50,48 +72,51 @@ export const InteractionPrompts = {
 {{terminalOutput}}
 """
 
-【分析的问题】
+【之前的分析结果】
 {{previousAnalysis}}
 
 【用户的回复】
 {{userReply}}
 
-请将用户回复转换为终端输入。
+请根据**分析结果中的 selectionType** 将用户回复转换为终端输入。
 
-## 重要：识别选择类型
+## 关键：根据 selectionType 处理
 
-1. **方向键选择模式**：如果终端输出中有以下标记之一，表示是方向键选择：
-   - ❯ 或 → 标记当前选项
-   - ✔ 或 ✓ 标记默认选项
-   - 选项前面有特殊符号指示当前选中
+### 如果 selectionType === "arrow"（方向键选择模式）
+- 用户选择默认选项（defaultOptionIndex）：直接回车，arrowCount = 0
+- 用户选择其他选项 N：需要按 (N - defaultOptionIndex) 次下箭头 + 回车
+- arrowCount = 目标选项 - 默认选项索引
 
-   这种模式下：
-   - 选择默认选项（有标记的）：直接回车
-   - 选择第 N 个选项（非默认）：需要按 (N-当前选中位置) 次方向键下 + 回车
-   - 返回格式：{ "input": "\\x1b[B\\x1b[B\\r", "selectionType": "arrow", "arrowCount": 2 }
+例如：defaultOptionIndex = 1，用户选 "2"
+- arrowCount = 2 - 1 = 1（按1次下箭头）
+- 返回：{ "selectionType": "arrow", "arrowCount": 1 }
 
-2. **数字选择模式**：如果选项只是简单的数字列表，没有选中标记：
-   - 直接输入数字 + 回车
-   - 返回格式：{ "input": "2\\r", "selectionType": "number" }
+### 如果 selectionType === "number"（数字选择模式）
+- 直接输入用户选择的数字
+- 返回：{ "selectionType": "number", "input": "2" }
 
-## 方向键编码
-- 上箭头：\\x1b[A
+### 如果 selectionType === "confirm"（确认模式）
+- y/yes/是/同意 → input: "y"
+- n/no/否/拒绝 → input: "n"
+- 返回：{ "selectionType": "confirm", "input": "y" }
+
+## 方向键编码（由程序自动生成，你只需要返回 arrowCount）
 - 下箭头：\\x1b[B
 - 回车：\\r
 
 返回 JSON 格式：
 {
   "understood": true,
-  "input": "要发送到终端的具体内容（如果是方向键选择，包含方向键序列和回车）",
-  "selectionType": "arrow | number | text",
-  "arrowCount": 0,  // 仅方向键模式需要，表示按几次下箭头
-  "feedback": "给用户的简短反馈（可选）"
+  "selectionType": "arrow | number | confirm | text",
+  "input": "数字或文本输入（方向键模式留空）",
+  "arrowCount": 0,
+  "feedback": "给用户的简短反馈"
 }
 
 要求：
-1. 仔细分析终端输出的选择方式
-2. 方向键模式必须返回完整序列（方向键 + 回车）
-3. 数字模式返回数字 + 回车
+1. 必须使用 previousAnalysis 中的 selectionType
+2. 方向键模式只返回 arrowCount，不要返回 input
+3. 数字模式返回 input 为数字字符串
 4. 只返回 JSON`,
 
   /**

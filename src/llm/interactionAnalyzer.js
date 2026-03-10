@@ -133,12 +133,17 @@ class LLMInteractionAnalyzer {
       };
     }
 
+    // 获取之前分析的选择类型
+    const previousAnalysis = interactionContext.analysis;
+    const selectionType = previousAnalysis?.selectionType || 'text';
+    const defaultOptionIndex = previousAnalysis?.defaultOptionIndex || 1;
+
     // 有上下文，用 LLM 解析
     if (this.llmClient.isAvailable()) {
       try {
         const prompt = InteractionPrompts.parseReply
           .replace('{{terminalOutput}}', interactionContext.terminalOutput)
-          .replace('{{previousAnalysis}}', JSON.stringify(interactionContext.analysis))
+          .replace('{{previousAnalysis}}', JSON.stringify(previousAnalysis))
           .replace('{{userReply}}', userReply);
 
         const response = await this.llmClient.chat(prompt, {
@@ -151,21 +156,48 @@ class LLMInteractionAnalyzer {
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const result = JSON.parse(jsonMatch[0]);
-          logger.info({ result }, '🤖 LLM 解析用户回复成功');
+          logger.info({ result, contextSelectionType: selectionType, defaultOptionIndex }, '🤖 LLM 解析用户回复成功');
 
-          // 如果是方向键选择模式，生成正确的输入序列
-          if (result.selectionType === 'arrow' && result.arrowCount !== undefined) {
-            const arrowCount = result.arrowCount || 0;
+          // 根据选择类型生成正确的输入序列
+          if (result.selectionType === 'arrow' || selectionType === 'arrow') {
+            // 方向键选择模式
+            const arrowCount = result.arrowCount !== undefined ? result.arrowCount : 0;
+
+            // 如果 LLM 返回的是数字，计算 arrowCount
+            if (result.input && /^\d+$/.test(result.input.trim())) {
+              const targetIndex = parseInt(result.input.trim());
+              result.arrowCount = targetIndex - defaultOptionIndex;
+            }
+
+            const finalArrowCount = result.arrowCount || 0;
             let input = '';
-            for (let i = 0; i < arrowCount; i++) {
+            for (let i = 0; i < finalArrowCount; i++) {
               input += '\x1b[B';  // 下箭头
             }
             input += '\r';  // 回车确认
             result.input = input;
-            result.feedback = result.feedback || `已选择第 ${arrowCount + 1} 个选项`;
-          } else if (result.selectionType === 'number' && result.input) {
-            // 数字选择模式，确保有回车
-            if (!result.input.includes('\r')) {
+            result.selectionType = 'arrow';
+            result.arrowCount = finalArrowCount;
+            result.feedback = result.feedback || `已选择第 ${finalArrowCount + defaultOptionIndex} 个选项`;
+          } else if (result.selectionType === 'number' || selectionType === 'number') {
+            // 数字选择模式
+            result.selectionType = 'number';
+            if (result.input) {
+              result.input = result.input.trim() + '\r';
+            } else {
+              result.input = userReply.trim() + '\r';
+            }
+          } else if (result.selectionType === 'confirm' || selectionType === 'confirm') {
+            // 确认模式
+            result.selectionType = 'confirm';
+            if (!result.input) {
+              const lower = userReply.toLowerCase();
+              if (lower === 'y' || lower === 'yes' || lower === '是' || lower === '同意') {
+                result.input = 'y\r';
+              } else {
+                result.input = 'n\r';
+              }
+            } else {
               result.input = result.input.trim() + '\r';
             }
           }
@@ -177,10 +209,31 @@ class LLMInteractionAnalyzer {
       }
     }
 
-    // 降级：直接返回用户输入
+    // 降级：根据 selectionType 处理
+    if (selectionType === 'arrow') {
+      // 尝试从用户输入中提取数字
+      const numMatch = userReply.match(/\d+/);
+      if (numMatch) {
+        const targetIndex = parseInt(numMatch[0]);
+        const arrowCount = targetIndex - defaultOptionIndex;
+        let input = '';
+        for (let i = 0; i < arrowCount; i++) {
+          input += '\x1b[B';
+        }
+        input += '\r';
+        return {
+          understood: true,
+          input,
+          selectionType: 'arrow',
+          arrowCount,
+          feedback: `已选择第 ${targetIndex} 个选项`
+        };
+      }
+    }
+
     return {
       understood: true,
-      input: userReply.trim(),
+      input: userReply.trim() + '\r',
       selectionType: 'text'
     };
   }
