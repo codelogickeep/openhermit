@@ -8,7 +8,7 @@ export const InteractionPrompts = {
    * 终端输出分析 Prompt
    * 判断是否需要用户交互
    */
-  analyzeOutput: `你是一个终端交互分析助手。分析以下 Claude Code 终端输出，判断当前状态。
+  analyzeOutput: `你是一个终端交互分析助手。分析以下 Claude Code 终端输出,判断当前状态。
 
 【终端输出】
 """
@@ -29,55 +29,56 @@ export const InteractionPrompts = {
   }
 }
 
-## 重要：识别选择类型
+## 重要:识别选择类型
 
 1. **方向键选择模式 (arrow)**：终端输出中有以下标记之一：
    - ❯ 或 → 标记当前高亮的选项（光标所在位置）
    - ✔ 或 ✓ 标记已被选中的选项
-   - 例如：\`❯ 1. Dark mode ✔\` 表示第1个选项被高亮且选中
 
 2. **数字选择模式 (number)**：选项只是简单的数字列表，没有选中标记
-   - 例如：1. 创建新文件\n2. 修改现有文件
 
 3. **确认模式 (confirm)**：y/n 确认
-   - 例如：(y/n) 或 [Y/n]
 
-## 关键：识别 defaultOptionIndex
+## 关键:识别 defaultOptionIndex
 
-**defaultOptionIndex** 是当前被高亮/选中的选项的位置（从1开始）。
+**defaultOptionIndex** 是当前被 ❯ 或 → 标记的选项的**序号**（从1开始）。
 
-**识别方法**：
-1. 找到有 \`❯\` 或 \`→\` 标记的那一行
-2. 提取该行的数字（如 \`1.\` 中的 1）
-3. 该数字就是 defaultOptionIndex
+**识别方法**（非常重要！）:
+1. 找到以 \`❯\` 或 \`→\` **开头**的那一行
+2. 该行中的**第一个数字**就是 defaultOptionIndex
+3. **不要看 ✔ 在哪一行，只看 ❯ 在哪一行**
 
-**示例**：
+**示例分析**：
 \`\`\`
 ❯ 1. Dark mode ✔
   2. Light mode
-  3. Dark mode (colorblind-friendly)
 \`\`\`
-- 有 \`❯\` 的行是 \`❯ 1. Dark mode ✔\`
-- 该行的数字是 1
-- 所以 **defaultOptionIndex = 1**
+- \`❯\` 在第1行开头
+- 该行的数字是 \`1\`
+- 所以 **defaultOptionIndex = 1**（不是2！）
 
-**错误示例（不要这样）**：
-- ❌ 看到 \`✔\` 就认为是默认选项
-- ❌ 把选项内容当作索引
+\`\`\`
+  1. Dark mode
+❯ 2. Light mode ✔
+\`\`\`
+- \`❯\` 在第2行开头
+- 该行的数字是 \`2\`
+- 所以 **defaultOptionIndex = 2**
+
+**常见错误（不要这样）**：
+- ❌ 看到 \`✔\` 在第2行就认为 defaultOptionIndex=2
+- ❌ 没有找到 ❯ 就随便选一个数字
+- ❌ 把选项文本当作索引
 
 判断标准：
 1. needsInteraction: 如果 Claude 正在等待用户输入，设为 true
 2. taskCompleted: 如果终端显示 "Crunched for XXs" 或 "Brewed for XXs" 或任务已明确完成，设为 true
-3. type:
-   - selection: 有编号选项列表供用户选择
-   - text_input: 需要用户输入自由文本
-   - confirmation: y/n 确认
-   - none: Claude 正在思考或执行任务，不需要用户输入
-4. selectionType: arrow | number | confirm（仅 type 为 selection 或 confirmation 时需要）
-5. defaultOptionIndex: 有 ❯ 标记的那一行的数字（仅方向键模式需要）
-6. options: 仅当 type 为 selection 时，提取选项列表
-7. question: 提取 Claude 正在问的问题
-8. 只返回 JSON，不要其他内容`,
+3. type: selection/text_input/confirmation/none
+4. selectionType: arrow/number/confirm（仅 type 为 selection 或 confirmation 时需要）
+5. defaultOptionIndex: **有 ❯ 开头的那一行的数字**（仅方向键模式需要）
+6. options: 提取所有选项文本
+7. question: 提取问题
+8. 只返回 JSON`,
 
   /**
    * 用户回复解析 Prompt

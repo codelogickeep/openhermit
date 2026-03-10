@@ -28,10 +28,12 @@ class LLMInteractionAnalyzer {
       try {
         const prompt = InteractionPrompts.analyzeOutput.replace('{{terminalOutput}}', terminalOutput);
 
-        // 打印发送给 LLM 的内容
+        // 打印发送给 LLM 的内容（更详细）
         logger.info({
           terminalOutputLength: terminalOutput.length,
-          terminalOutputPreview: terminalOutput.slice(-500)
+          terminalOutputPreview: terminalOutput.slice(-500),
+          // 打印选项相关的行（用于调试空格问题）
+          optionLines: terminalOutput.split('\n').filter(line => /[❯→✔]/.test(line)).slice(0, 5)
         }, '📤 发送给 LLM 分析的内容');
 
         const response = await this.llmClient.chat(prompt, {
