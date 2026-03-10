@@ -32,10 +32,9 @@ export const InteractionPrompts = {
 ## 重要：识别选择类型
 
 1. **方向键选择模式 (arrow)**：终端输出中有以下标记之一：
-   - ❯ 或 → 标记当前选项
-   - ✔ 或 ✓ 标记默认选项
-   - 选项前面有特殊符号指示当前选中
-   - 例如：❯ 1. Dark mode ✔
+   - ❯ 或 → 标记当前高亮的选项（光标所在位置）
+   - ✔ 或 ✓ 标记已被选中的选项
+   - 例如：\`❯ 1. Dark mode ✔\` 表示第1个选项被高亮且选中
 
 2. **数字选择模式 (number)**：选项只是简单的数字列表，没有选中标记
    - 例如：1. 创建新文件\n2. 修改现有文件
@@ -43,9 +42,28 @@ export const InteractionPrompts = {
 3. **确认模式 (confirm)**：y/n 确认
    - 例如：(y/n) 或 [Y/n]
 
-## defaultOptionIndex
-仅方向键模式需要，表示当前默认选中的选项索引（从1开始）。
-例如：❯ 1. Dark mode ✔ 表示默认选中的是第1个选项。
+## 关键：识别 defaultOptionIndex
+
+**defaultOptionIndex** 是当前被高亮/选中的选项的位置（从1开始）。
+
+**识别方法**：
+1. 找到有 \`❯\` 或 \`→\` 标记的那一行
+2. 提取该行的数字（如 \`1.\` 中的 1）
+3. 该数字就是 defaultOptionIndex
+
+**示例**：
+\`\`\`
+❯ 1. Dark mode ✔
+  2. Light mode
+  3. Dark mode (colorblind-friendly)
+\`\`\`
+- 有 \`❯\` 的行是 \`❯ 1. Dark mode ✔\`
+- 该行的数字是 1
+- 所以 **defaultOptionIndex = 1**
+
+**错误示例（不要这样）**：
+- ❌ 看到 \`✔\` 就认为是默认选项
+- ❌ 把选项内容当作索引
 
 判断标准：
 1. needsInteraction: 如果 Claude 正在等待用户输入，设为 true
@@ -56,7 +74,7 @@ export const InteractionPrompts = {
    - confirmation: y/n 确认
    - none: Claude 正在思考或执行任务，不需要用户输入
 4. selectionType: arrow | number | confirm（仅 type 为 selection 或 confirmation 时需要）
-5. defaultOptionIndex: 默认选中的选项索引（仅方向键模式需要）
+5. defaultOptionIndex: 有 ❯ 标记的那一行的数字（仅方向键模式需要）
 6. options: 仅当 type 为 selection 时，提取选项列表
 7. question: 提取 Claude 正在问的问题
 8. 只返回 JSON，不要其他内容`,
