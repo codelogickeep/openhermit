@@ -14,6 +14,60 @@ const DEFAULT_IPC_PORT = 31337;
 let shadowConfigDir = null;
 
 /**
+ * 获取用户原始 Claude Code 配置目录
+ * @returns {string} 配置目录路径
+ */
+function getOriginalClaudeConfigDir() {
+  // 如果环境变量指定了配置目录，使用它
+  if (process.env.CLAUDE_CONFIG_DIR) {
+    return process.env.CLAUDE_CONFIG_DIR;
+  }
+  // Claude Code 默认配置目录
+  return path.join(os.homedir(), '.claude');
+}
+
+/**
+ * 复制用户原始配置文件到影子目录（保留登录凭据等重要配置）
+ * @param {string} targetDir - 目标目录
+ */
+function copyOriginalConfigFiles(targetDir) {
+  const originalDir = getOriginalClaudeConfigDir();
+
+  if (!fs.existsSync(originalDir)) {
+    logger.debug({ originalDir }, '原始 Claude 配置目录不存在，跳过复制');
+    return;
+  }
+
+  // 需要复制的配置文件（不包含 settings.json，因为我们有自己的配置）
+  const configFiles = [
+    'credentials.json',      // 登录凭据（重要！）
+    'projects.json',         // 项目配置
+    'stats.json',            // 统计数据
+    'mcp_servers.json',      // MCP 服务器配置
+    'api_key.txt',           // API 密钥
+    '.credentials'           // 可能的凭据文件
+  ];
+
+  let copiedCount = 0;
+  for (const file of configFiles) {
+    const srcPath = path.join(originalDir, file);
+    const destPath = path.join(targetDir, file);
+
+    if (fs.existsSync(srcPath)) {
+      try {
+        fs.copyFileSync(srcPath, destPath);
+        copiedCount++;
+        logger.debug({ file }, '📋 复制配置文件');
+      } catch (error) {
+        logger.warn({ file, error: error.message }, '复制配置文件失败');
+      }
+    }
+  }
+
+  logger.info({ copiedCount, originalDir, targetDir }, '📋 复制原始配置文件到影子目录');
+}
+
+/**
  * 生成影子配置目录
  * @param {number} ipcPort - IPC 端口
  * @returns {string} 配置目录路径
@@ -65,6 +119,9 @@ export function generateShadowConfig(ipcPort = DEFAULT_IPC_PORT) {
   if (!fs.existsSync(shadowConfigDir)) {
     fs.mkdirSync(shadowConfigDir, { recursive: true });
   }
+
+  // ⚠️ 重要：复制用户原始配置文件（包括登录凭据）
+  copyOriginalConfigFiles(shadowConfigDir);
 
   // 写入 settings.json
   const settingsPath = path.join(shadowConfigDir, 'settings.json');
