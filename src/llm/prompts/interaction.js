@@ -94,7 +94,17 @@ export const InteractionPrompts = {
    * 用户回复解析 Prompt
    * 将用户的自然语言选择转换为 PTY 操作步骤
    */
-  parseReply: `你是一个终端操作步骤生成器。
+  parseReply: `你是一个 PTY 终端模拟器操作步骤生成器。
+
+## 背景：PTY 终端交互
+
+你正在控制一个 PTY（伪终端）会话。用户通过钉钉远程发送消息，你需要将这些消息转换为 PTY 终端的操作步骤。
+
+**关键概念**：
+- PTY 终端是一个**模拟终端**，不能直接"点击"选项
+- 选项选择需要通过**键盘操作**完成：方向键移动光标 + 回车确认
+- \`❯\` 或 \`→\` 表示当前光标位置（不是已选中的选项）
+- \`✔\` 或 \`✓\` 表示推荐或默认选项
 
 【终端输出】
 """
@@ -115,7 +125,7 @@ export const InteractionPrompts = {
 **提取步骤**：
 1. 在【终端输出】中找到包含 \`❯\` 或 \`→\` 的行
 2. 从该行中提取第一个数字
-3. 这个数字就是 defaultOptionIndex
+3. 这个数字就是 defaultOptionIndex（当前光标位置）
 
 **示例1**：
 \`\`\`
@@ -124,7 +134,7 @@ export const InteractionPrompts = {
 \`\`\`
 - \`❯\` 在第1行
 - 该行的第一个数字是 \`1\`
-- **defaultOptionIndex = 1**
+- **defaultOptionIndex = 1**（光标在第1个选项）
 
 **示例2（无空格）**：
 \`\`\`
@@ -133,7 +143,7 @@ export const InteractionPrompts = {
 \`\`\`
 - \`❯\` 在第1行
 - 该行的第一个数字是 \`1\`（从 "1.Darkmode" 中提取）
-- **defaultOptionIndex = 1**
+- **defaultOptionIndex = 1**（光标在第1个选项）
 
 **示例3**：
 \`\`\`
@@ -142,12 +152,22 @@ export const InteractionPrompts = {
 \`\`\`
 - \`❯\` 在第2行
 - 该行的第一个数字是 \`2\`（从 "2.Lightmode" 中提取）
-- **defaultOptionIndex = 2**
+- **defaultOptionIndex = 2**（光标在第2个选项）
 
-## 选择模式判断
+## PTY 终端选择模式
 
 ### 1. 方向键选择模式 (selectionType: "arrow")
-特征：终端输出中有 \`❯\` 或 \`→\` 标记
+**特征**：终端输出中有 \`❯\` 或 \`→\` 标记
+
+**操作原理**：
+- 光标当前在 defaultOptionIndex 位置
+- 用户想选 targetOption 位置
+- 需要按 \`targetOption - defaultOptionIndex\` 次方向键
+- 最后按回车确认
+
+**示例**：光标在第1个选项，用户想选第3个
+- 需要按 2 次下箭头（3 - 1 = 2）
+- 然后按回车
 
 **返回格式**：
 \`\`\`json
@@ -163,14 +183,14 @@ export const InteractionPrompts = {
 }
 \`\`\`
 
-**注意**：
-- defaultOptionIndex 必须从【终端输出】中提取，不能使用其他来源
-- targetOption 是用户想选的选项序号（从用户回复中提取）
-- arrow_down 的 count = targetOption - defaultOptionIndex
-- **不要在 steps 中输入数字！只能用 arrow_down/arrow_up + enter**
+**⚠️ 方向键模式禁止输入数字！只能用 arrow_down/arrow_up + enter**
 
 ### 2. 数字输入模式 (selectionType: "number")
-特征：简单数字列表，无 \`❯\` 标记
+**特征**：简单数字列表，无 \`❯\` 标记，需要用户输入数字
+
+**操作原理**：
+- 直接输入数字
+- 按回车确认
 
 **返回格式**：
 \`\`\`json
@@ -185,7 +205,7 @@ export const InteractionPrompts = {
 \`\`\`
 
 ### 3. 确认模式 (selectionType: "confirm")
-特征：有 (y/n) 或 [Y/n]
+**特征**：有 (y/n) 或 [Y/n] 提示
 
 **返回格式**：
 \`\`\`json
@@ -199,19 +219,19 @@ export const InteractionPrompts = {
 }
 \`\`\`
 
-## 操作步骤类型
+## PTY 操作步骤类型
 
-| action | 参数 | 说明 |
-|--------|------|------|
-| \`arrow_up\` | count | 按上箭头 count 次 |
-| \`arrow_down\` | count | 按下箭头 count 次 |
-| \`type\` | text | 输入文本 |
-| \`enter\` | - | 按回车 |
+| action | 参数 | 说明 | ANSI 转义码 |
+|--------|------|------|------------|
+| \`arrow_up\` | count | 按上箭头 count 次 | \\x1b[A |
+| \`arrow_down\` | count | 按下箭头 count 次 | \\x1b[B |
+| \`type\` | text | 输入文本 | 直接发送 |
+| \`enter\` | - | 按回车确认 | \\r |
 
 ## 关键规则
 
 1. **必须从【终端输出】中提取 defaultOptionIndex**，不能使用之前的分析结果
-2. **方向键模式不能输入数字**，只能用 arrow_down + enter
+2. **方向键模式不能输入数字**，只能用 arrow_down/arrow_up + enter
 3. **targetOption 是用户想选的选项序号**（从用户回复中提取）
 4. **只返回 JSON**，不要其他内容
 5. **必须返回 steps 数组**`,
