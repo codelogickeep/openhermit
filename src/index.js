@@ -631,6 +631,12 @@ class OpenHermit {
    * @param {object} metadata - 消息元数据
    */
   async handleChannelText(text, senderId, metadata = {}) {
+    // 确保 text 是字符串
+    if (typeof text !== 'string') {
+      logger.error({ text, senderId, textType: typeof text }, '❌ handleChannelText 收到非字符串类型的 text');
+      return;
+    }
+
     logger.info({ text: text.substring(0, 50), senderId }, '📥 [index.js] handleChannelText 被调用');
     const context = this.getContext();
     await this.messageHandler.handleChannelText(text, senderId, context, metadata);

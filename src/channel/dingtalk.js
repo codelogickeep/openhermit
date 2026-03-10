@@ -169,7 +169,7 @@ class DingTalkChannel extends EventEmitter {
         createAt: data.createAt,
         senderId: data.senderId,
         senderStaffId: data.senderStaffId,
-        text: data.text?.content || data.content
+        text: data.text?.content || data.text?.recognition || data.content
       }, '钉钉原始消息');
 
       // 消息去重：使用消息 ID 防止重复处理
@@ -194,6 +194,12 @@ class DingTalkChannel extends EventEmitter {
         logger.info({ recognition: text }, '🎤 收到语音消息');
       } else if (data.content) {
         text = data.content;
+      }
+
+      // 确保 text 是字符串类型
+      if (text && typeof text !== 'string') {
+        logger.error({ text, textType: typeof text }, '❌ 提取的 text 不是字符串类型');
+        text = String(text);
       }
 
       this.sessionWebhook = data.sessionWebhook || data.sessionWebhookUrl;

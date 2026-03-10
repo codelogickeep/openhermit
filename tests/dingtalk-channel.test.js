@@ -209,6 +209,85 @@ describe('DingTalkChannel', () => {
       expect(token).toBe('mock-token');
     });
   });
+
+  describe('handleMessage 方法', () => {
+    it('应该正确处理语音消息的 recognition 字段', async () => {
+      const voiceMessageData = {
+        msgId: 'test-msg-id',
+        senderId: 'test-sender',
+        senderStaffId: 'test-staff-id',
+        text: {
+          downloadCode: 'encrypted-code',
+          recognition: '查看一下当前目录'
+        }
+      };
+
+      // 监听 text 事件
+      const textHandler = vi.fn();
+      channel.on('text', textHandler);
+
+      // 调用 handleMessage
+      await channel.handleMessage({
+        data: JSON.stringify(voiceMessageData)
+      });
+
+      // 验证 text 事件被触发，且传递的是 recognition 字段的内容
+      expect(textHandler).toHaveBeenCalledWith(
+        '查看一下当前目录',
+        'test-staff-id',
+        { isVoiceMessage: true }
+      );
+    });
+
+    it('应该正确处理普通文本消息', async () => {
+      const textMessageData = {
+        msgId: 'test-msg-id-2',
+        senderId: 'test-sender',
+        senderStaffId: 'test-staff-id',
+        text: {
+          content: '这是一条普通消息'
+        }
+      };
+
+      const textHandler = vi.fn();
+      channel.on('text', textHandler);
+
+      await channel.handleMessage({
+        data: JSON.stringify(textMessageData)
+      });
+
+      expect(textHandler).toHaveBeenCalledWith(
+        '这是一条普通消息',
+        'test-staff-id',
+        { isVoiceMessage: false }
+      );
+    });
+
+    it('应该处理非字符串类型的 text 字段', async () => {
+      const invalidMessageData = {
+        msgId: 'test-msg-id-3',
+        senderId: 'test-sender',
+        senderStaffId: 'test-staff-id',
+        text: {
+          recognition: 12345 // 非字符串类型
+        }
+      };
+
+      const textHandler = vi.fn();
+      channel.on('text', textHandler);
+
+      await channel.handleMessage({
+        data: JSON.stringify(invalidMessageData)
+      });
+
+      // 应该转换为字符串
+      expect(textHandler).toHaveBeenCalledWith(
+        '12345',
+        'test-staff-id',
+        { isVoiceMessage: true }
+      );
+    });
+  });
 });
 
 describe('splitChunks 边界情况', () => {
