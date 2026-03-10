@@ -159,7 +159,6 @@ describe('完整交互流程稳定性测试', () => {
       const userReply = "2";
       const prompt = InteractionPrompts.parseReply
         .replace('{{terminalOutput}}', realTerminalOutput)
-        .replace('{{previousAnalysis}}', JSON.stringify(analysis))
         .replace('{{userReply}}', userReply);
 
       const response = await llmClient.chat(prompt, {
@@ -213,7 +212,6 @@ describe('完整交互流程稳定性测试', () => {
       const userReply = "2";
       const parsePrompt = InteractionPrompts.parseReply
         .replace('{{terminalOutput}}', realTerminalOutput)
-        .replace('{{previousAnalysis}}', JSON.stringify(analysis))
         .replace('{{userReply}}', userReply);
 
       const parseResponse = await llmClient.chat(parsePrompt, {

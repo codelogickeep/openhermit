@@ -210,9 +210,17 @@ class LLMInteractionAnalyzer {
     // 有上下文，用 LLM 解析
     if (this.llmClient.isAvailable()) {
       try {
+        // 打印传给 LLM 的终端输出（用于调试）
+        console.log('\n' + '='.repeat(80));
+        console.log('📤 parseReply 传给 LLM 的终端输出:');
+        console.log('='.repeat(80));
+        console.log(interactionContext.terminalOutput);
+        console.log('='.repeat(80));
+        console.log('📤 用户回复:', userReply);
+        console.log('='.repeat(80));
+
         const prompt = InteractionPrompts.parseReply
           .replace('{{terminalOutput}}', interactionContext.terminalOutput)
-          .replace('{{previousAnalysis}}', JSON.stringify(previousAnalysis))
           .replace('{{userReply}}', userReply);
 
         const response = await this.llmClient.chat(prompt, {

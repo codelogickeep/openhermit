@@ -101,40 +101,29 @@ export const InteractionPrompts = {
 {{terminalOutput}}
 """
 
-【之前分析结果】
-{{previousAnalysis}}
-
 【用户回复】
 {{userReply}}
 
 请根据终端输出和用户回复，生成 PTY 操作步骤。
 
-## 关键：必须返回以下字段
+## ⚠️ 极其重要：必须从终端输出中提取 defaultOptionIndex
 
-对于**方向键选择模式**（有 ❯ 或 → 标记），必须返回：
-\`\`\`json
-{
-  "selectionType": "arrow",
-  "defaultOptionIndex": 1,
-  "targetOption": 2,
-  "steps": [
-    { "action": "arrow_down", "count": 1 },
-    { "action": "enter" }
-  ],
-  "feedback": "已选择 Light mode"
-}
-\`\`\`
+**不要使用之前的分析结果！必须从上面的【终端输出】中重新提取！**
 
-## 重要：识别 defaultOptionIndex
+**defaultOptionIndex** 是 \`❯\` 或 \`→\` 所在行的**第一个数字**（从1开始）。
 
-**defaultOptionIndex** 是 \`❯\` 所在行的数字（从1开始）。
+**提取步骤**：
+1. 在【终端输出】中找到包含 \`❯\` 或 \`→\` 的行
+2. 从该行中提取第一个数字
+3. 这个数字就是 defaultOptionIndex
 
 **示例1**：
 \`\`\`
 ❯ 1. Dark mode ✔
   2. Light mode
 \`\`\`
-- \`❯\` 在第1行，数字是 1
+- \`❯\` 在第1行
+- 该行的第一个数字是 \`1\`
 - **defaultOptionIndex = 1**
 
 **示例2（无空格）**：
@@ -142,7 +131,8 @@ export const InteractionPrompts = {
 ❯1.Darkmode✔
   2.Lightmode
 \`\`\`
-- \`❯\` 在第1行，提取第一个数字是 1
+- \`❯\` 在第1行
+- 该行的第一个数字是 \`1\`（从 "1.Darkmode" 中提取）
 - **defaultOptionIndex = 1**
 
 **示例3**：
@@ -150,38 +140,39 @@ export const InteractionPrompts = {
   1.Darkmode
 ❯2.Lightmode✔
 \`\`\`
-- \`❯\` 在第2行，数字是 2
+- \`❯\` 在第2行
+- 该行的第一个数字是 \`2\`（从 "2.Lightmode" 中提取）
 - **defaultOptionIndex = 2**
 
 ## 选择模式判断
 
 ### 1. 方向键选择模式 (selectionType: "arrow")
-特征：有 \`❯\` 或 \`→\` 标记
+特征：终端输出中有 \`❯\` 或 \`→\` 标记
 
-**示例**：用户回复 "2"，当前光标在第1个
+**返回格式**：
 \`\`\`json
 {
   "selectionType": "arrow",
-  "defaultOptionIndex": 1,
-  "targetOption": 2,
+  "defaultOptionIndex": <从终端输出提取>,
+  "targetOption": <用户想选的序号>,
   "steps": [
-    { "action": "arrow_down", "count": 1 },
+    { "action": "arrow_down", "count": <targetOption - defaultOptionIndex> },
     { "action": "enter" }
   ],
-  "feedback": "已选择第2个选项"
+  "feedback": "已选择第X个选项"
 }
 \`\`\`
 
 **注意**：
-- defaultOptionIndex 从终端输出中提取（找 ❯ 所在行的数字）
-- targetOption 是用户想选的选项序号
+- defaultOptionIndex 必须从【终端输出】中提取，不能使用其他来源
+- targetOption 是用户想选的选项序号（从用户回复中提取）
 - arrow_down 的 count = targetOption - defaultOptionIndex
 - **不要在 steps 中输入数字！只能用 arrow_down/arrow_up + enter**
 
 ### 2. 数字输入模式 (selectionType: "number")
 特征：简单数字列表，无 \`❯\` 标记
 
-**示例**：用户回复 "2"
+**返回格式**：
 \`\`\`json
 {
   "selectionType": "number",
@@ -196,7 +187,7 @@ export const InteractionPrompts = {
 ### 3. 确认模式 (selectionType: "confirm")
 特征：有 (y/n) 或 [Y/n]
 
-**示例**：用户回复 "y"
+**返回格式**：
 \`\`\`json
 {
   "selectionType": "confirm",
@@ -219,8 +210,8 @@ export const InteractionPrompts = {
 
 ## 关键规则
 
-1. **方向键模式不能输入数字**，只能用 arrow_down + enter
-2. **必须从终端输出中提取 defaultOptionIndex**（找 ❯ 行的数字）
+1. **必须从【终端输出】中提取 defaultOptionIndex**，不能使用之前的分析结果
+2. **方向键模式不能输入数字**，只能用 arrow_down + enter
 3. **targetOption 是用户想选的选项序号**（从用户回复中提取）
 4. **只返回 JSON**，不要其他内容
 5. **必须返回 steps 数组**`,

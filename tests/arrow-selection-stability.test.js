@@ -63,7 +63,6 @@ describe('方向键选择模式稳定性测试', () => {
     const userReply = "2";
     const prompt = InteractionPrompts.parseReply
       .replace('{{terminalOutput}}', realTerminalOutput)
-      .replace('{{previousAnalysis}}', JSON.stringify(realAnalysis))
       .replace('{{userReply}}', userReply);
 
     console.log('\n📤 发送给 LLM 的 Prompt:');
@@ -117,7 +116,6 @@ describe('方向键选择模式稳定性测试', () => {
     const userReply = "1";
     const prompt = InteractionPrompts.parseReply
       .replace('{{terminalOutput}}', realTerminalOutput)
-      .replace('{{previousAnalysis}}', JSON.stringify(realAnalysis))
       .replace('{{userReply}}', userReply);
 
     const response = await llmClient.chat(prompt, {
@@ -152,7 +150,6 @@ describe('方向键选择模式稳定性测试', () => {
     const userReply = "3";
     const prompt = InteractionPrompts.parseReply
       .replace('{{terminalOutput}}', realTerminalOutput)
-      .replace('{{previousAnalysis}}', JSON.stringify(realAnalysis))
       .replace('{{userReply}}', userReply);
 
     const response = await llmClient.chat(prompt, {
