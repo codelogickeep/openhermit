@@ -102,29 +102,27 @@ export const InteractionPrompts = {
 
 ### 如果 selectionType === "arrow"（方向键选择模式）
 
-**必须计算 arrowCount**：
-1. 从终端输出中找到默认选中的选项（有 ❯、→、✔ 等标记）
-2. 从用户回复中提取想选择的选项数字
-3. 计算：arrowCount = 用户想选的选项 - 默认选项位置
+**步骤1：从终端输出中识别默认选项位置**
+- 找到有 \`❯\` 或 \`→\` 标记的行
+- 提取该行的数字，这就是 \`defaultOptionIndex\`
+- 例如：\`❯ 1. Dark mode ✔\` → defaultOptionIndex = 1
 
-**示例**：
-终端显示：
-\`\`\`
-❯ 1. Dark mode ✔
-  2. Light mode
-  3. Dark mode (colorblind-friendly)
-\`\`\`
-- 默认选项是第1个（有 ❯ 和 ✔ 标记）
-- 用户回复 "2"，想选第2个
-- arrowCount = 2 - 1 = 1（需要按1次下箭头）
+**步骤2：识别用户想选的选项**
+- 从用户回复中提取数字
+- 例如：用户回复 "2" → targetOption = 2
+
+**步骤3：计算 arrowCount**
+- arrowCount = targetOption - defaultOptionIndex
+- 例如：targetOption = 2, defaultOptionIndex = 1 → arrowCount = 1
 
 **返回格式**：
 \`\`\`json
 {
   "understood": true,
   "selectionType": "arrow",
-  "arrowCount": 1,
+  "defaultOptionIndex": 1,
   "targetOption": 2,
+  "arrowCount": 1,
   "feedback": "已选择 Light mode"
 }
 \`\`\`
@@ -139,8 +137,8 @@ export const InteractionPrompts = {
 - 返回：{ "selectionType": "confirm", "input": "y" }
 
 ## 重要提示
-1. 方向键模式**必须返回 arrowCount**，不要返回 input
-2. arrowCount = 目标选项位置 - 默认选项位置
+1. **必须从终端输出中识别 defaultOptionIndex**，不要依赖 previousAnalysis 中的值
+2. arrowCount = targetOption - defaultOptionIndex
 3. 只返回 JSON，不要其他内容`,
 
   /**

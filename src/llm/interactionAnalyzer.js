@@ -160,23 +160,26 @@ class LLMInteractionAnalyzer {
           // 根据选择类型生成正确的输入序列
           if (result.selectionType === 'arrow' || selectionType === 'arrow') {
             // 方向键选择模式
-            // 优先使用 targetOption 计算箭头数，其次使用 arrowCount
-            let arrowCount = 0;
+            // 优先使用 LLM 返回的 defaultOptionIndex，其次使用 context 中的值
+            const actualDefaultIndex = result.defaultOptionIndex ?? defaultOptionIndex;
+            let arrowCount;
 
-            if (result.targetOption !== undefined) {
-              // LLM 返回了目标选项，计算箭头数
-              arrowCount = result.targetOption - defaultOptionIndex;
+            if (result.targetOption !== undefined && actualDefaultIndex !== undefined) {
+              // LLM 返回了目标选项和默认选项，计算箭头数
+              arrowCount = result.targetOption - actualDefaultIndex;
             } else if (result.arrowCount !== undefined) {
               arrowCount = result.arrowCount;
             } else if (result.input && /^\d+$/.test(result.input.trim())) {
               // 从 input 中提取数字
               const targetIndex = parseInt(result.input.trim());
-              arrowCount = targetIndex - defaultOptionIndex;
+              arrowCount = targetIndex - actualDefaultIndex;
             } else {
               // 尝试从用户回复中提取数字
               const numMatch = userReply.match(/\d+/);
               if (numMatch) {
-                arrowCount = parseInt(numMatch[0]) - defaultOptionIndex;
+                arrowCount = parseInt(numMatch[0]) - actualDefaultIndex;
+              } else {
+                arrowCount = 0;
               }
             }
 
@@ -190,12 +193,14 @@ class LLMInteractionAnalyzer {
             result.input = input;
             result.selectionType = 'arrow';
             result.arrowCount = arrowCount;
-            result.feedback = result.feedback || `已选择第 ${arrowCount + defaultOptionIndex} 个选项`;
+            result.defaultOptionIndex = actualDefaultIndex;
+            result.feedback = result.feedback || `已选择第 ${arrowCount + actualDefaultIndex} 个选项`;
 
             logger.info({
               result,
               contextSelectionType: selectionType,
-              defaultOptionIndex,
+              contextDefaultOptionIndex: defaultOptionIndex,
+              actualDefaultIndex,
               calculatedArrowCount: arrowCount
             }, '🤖 LLM 解析用户回复成功（方向键模式）');
 
