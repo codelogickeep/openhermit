@@ -44,12 +44,16 @@ class LLMInteractionAnalyzer {
     for (const step of steps) {
       switch (step.action) {
         case 'arrow_down':
-          for (let i = 0; i < (step.count || 1); i++) {
+          // 使用 ?? 而不是 ||，因为 count: 0 是有效值
+          const downCount = step.count ?? 1;
+          for (let i = 0; i < downCount; i++) {
             input += '\x1b[B';  // 下箭头
           }
           break;
         case 'arrow_up':
-          for (let i = 0; i < (step.count || 1); i++) {
+          // 使用 ?? 而不是 ||，因为 count: 0 是有效值
+          const upCount = step.count ?? 1;
+          for (let i = 0; i < upCount; i++) {
             input += '\x1b[A';  // 上箭头
           }
           break;
@@ -243,6 +247,7 @@ class LLMInteractionAnalyzer {
           if (result.steps && Array.isArray(result.steps)) {
             const input = this.executeSteps(result.steps);
             result.input = input;
+            result.understood = true;  // 标记为已理解
 
             console.log('\n📦 steps 执行结果:');
             console.log('steps:', JSON.stringify(result.steps));
@@ -287,6 +292,7 @@ class LLMInteractionAnalyzer {
               result.arrowCount = arrowCount;
               result.defaultOptionIndex = actualDefaultIndex;
               result.feedback = result.feedback || `已选择第 ${arrowCount + actualDefaultIndex} 个选项`;
+              result.understood = true;  // 标记为已理解
 
               logger.info({
                 result,
@@ -295,6 +301,7 @@ class LLMInteractionAnalyzer {
             } else if (result.selectionType === 'number' || selectionType === 'number') {
               result.selectionType = 'number';
               result.input = userReply.trim() + '\r';
+              result.understood = true;  // 标记为已理解
             } else if (result.selectionType === 'confirm' || selectionType === 'confirm') {
               result.selectionType = 'confirm';
               const lower = userReply.toLowerCase();
@@ -303,6 +310,7 @@ class LLMInteractionAnalyzer {
               } else {
                 result.input = 'n\r';
               }
+              result.understood = true;  // 标记为已理解
             }
           }
 
