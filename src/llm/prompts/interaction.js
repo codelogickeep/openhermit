@@ -83,13 +83,33 @@ export const InteractionPrompts = {
 ## 关键：根据 selectionType 处理
 
 ### 如果 selectionType === "arrow"（方向键选择模式）
-- 用户选择默认选项（defaultOptionIndex）：直接回车，arrowCount = 0
-- 用户选择其他选项 N：需要按 (N - defaultOptionIndex) 次下箭头 + 回车
-- arrowCount = 目标选项 - 默认选项索引
 
-例如：defaultOptionIndex = 1，用户选 "2"
-- arrowCount = 2 - 1 = 1（按1次下箭头）
-- 返回：{ "selectionType": "arrow", "arrowCount": 1 }
+**必须计算 arrowCount**：
+1. 从终端输出中找到默认选中的选项（有 ❯、→、✔ 等标记）
+2. 从用户回复中提取想选择的选项数字
+3. 计算：arrowCount = 用户想选的选项 - 默认选项位置
+
+**示例**：
+终端显示：
+\`\`\`
+❯ 1. Dark mode ✔
+  2. Light mode
+  3. Dark mode (colorblind-friendly)
+\`\`\`
+- 默认选项是第1个（有 ❯ 和 ✔ 标记）
+- 用户回复 "2"，想选第2个
+- arrowCount = 2 - 1 = 1（需要按1次下箭头）
+
+**返回格式**：
+\`\`\`json
+{
+  "understood": true,
+  "selectionType": "arrow",
+  "arrowCount": 1,
+  "targetOption": 2,
+  "feedback": "已选择 Light mode"
+}
+\`\`\`
 
 ### 如果 selectionType === "number"（数字选择模式）
 - 直接输入用户选择的数字
@@ -100,24 +120,10 @@ export const InteractionPrompts = {
 - n/no/否/拒绝 → input: "n"
 - 返回：{ "selectionType": "confirm", "input": "y" }
 
-## 方向键编码（由程序自动生成，你只需要返回 arrowCount）
-- 下箭头：\\x1b[B
-- 回车：\\r
-
-返回 JSON 格式：
-{
-  "understood": true,
-  "selectionType": "arrow | number | confirm | text",
-  "input": "数字或文本输入（方向键模式留空）",
-  "arrowCount": 0,
-  "feedback": "给用户的简短反馈"
-}
-
-要求：
-1. 必须使用 previousAnalysis 中的 selectionType
-2. 方向键模式只返回 arrowCount，不要返回 input
-3. 数字模式返回 input 为数字字符串
-4. 只返回 JSON`,
+## 重要提示
+1. 方向键模式**必须返回 arrowCount**，不要返回 input
+2. arrowCount = 目标选项位置 - 默认选项位置
+3. 只返回 JSON，不要其他内容`,
 
   /**
    * 选择提示解析 Prompt

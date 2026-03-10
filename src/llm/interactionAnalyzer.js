@@ -156,29 +156,49 @@ class LLMInteractionAnalyzer {
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const result = JSON.parse(jsonMatch[0]);
-          logger.info({ result, contextSelectionType: selectionType, defaultOptionIndex }, '🤖 LLM 解析用户回复成功');
 
           // 根据选择类型生成正确的输入序列
           if (result.selectionType === 'arrow' || selectionType === 'arrow') {
             // 方向键选择模式
-            const arrowCount = result.arrowCount !== undefined ? result.arrowCount : 0;
+            // 优先使用 targetOption 计算箭头数，其次使用 arrowCount
+            let arrowCount = 0;
 
-            // 如果 LLM 返回的是数字，计算 arrowCount
-            if (result.input && /^\d+$/.test(result.input.trim())) {
+            if (result.targetOption !== undefined) {
+              // LLM 返回了目标选项，计算箭头数
+              arrowCount = result.targetOption - defaultOptionIndex;
+            } else if (result.arrowCount !== undefined) {
+              arrowCount = result.arrowCount;
+            } else if (result.input && /^\d+$/.test(result.input.trim())) {
+              // 从 input 中提取数字
               const targetIndex = parseInt(result.input.trim());
-              result.arrowCount = targetIndex - defaultOptionIndex;
+              arrowCount = targetIndex - defaultOptionIndex;
+            } else {
+              // 尝试从用户回复中提取数字
+              const numMatch = userReply.match(/\d+/);
+              if (numMatch) {
+                arrowCount = parseInt(numMatch[0]) - defaultOptionIndex;
+              }
             }
 
-            const finalArrowCount = result.arrowCount || 0;
+            // 生成方向键序列
             let input = '';
-            for (let i = 0; i < finalArrowCount; i++) {
+            for (let i = 0; i < arrowCount; i++) {
               input += '\x1b[B';  // 下箭头
             }
             input += '\r';  // 回车确认
+
             result.input = input;
             result.selectionType = 'arrow';
-            result.arrowCount = finalArrowCount;
-            result.feedback = result.feedback || `已选择第 ${finalArrowCount + defaultOptionIndex} 个选项`;
+            result.arrowCount = arrowCount;
+            result.feedback = result.feedback || `已选择第 ${arrowCount + defaultOptionIndex} 个选项`;
+
+            logger.info({
+              result,
+              contextSelectionType: selectionType,
+              defaultOptionIndex,
+              calculatedArrowCount: arrowCount
+            }, '🤖 LLM 解析用户回复成功（方向键模式）');
+
           } else if (result.selectionType === 'number' || selectionType === 'number') {
             // 数字选择模式
             result.selectionType = 'number';
@@ -187,6 +207,8 @@ class LLMInteractionAnalyzer {
             } else {
               result.input = userReply.trim() + '\r';
             }
+            logger.info({ result }, '🤖 LLM 解析用户回复成功（数字模式）');
+
           } else if (result.selectionType === 'confirm' || selectionType === 'confirm') {
             // 确认模式
             result.selectionType = 'confirm';
@@ -200,6 +222,7 @@ class LLMInteractionAnalyzer {
             } else {
               result.input = result.input.trim() + '\r';
             }
+            logger.info({ result }, '🤖 LLM 解析用户回复成功（确认模式）');
           }
 
           return result;
