@@ -57,10 +57,23 @@ export class MessageHandler {
     if (context.hitlActive) {
       const lower = trimmed.toLowerCase();
       if (lower === 'y' || lower === 'yes') {
-        hitlController.handleApprove(context);
+        // 检查是安全确认还是 Claude 内部确认
+        if (context.securityPendingCommand) {
+          // 安全确认：需要 app 实例来执行命令
+          // 这里通过 context 回调处理
+          hitlController.handleSecurityApprove(context, context.app);
+        } else {
+          // Claude 内部确认
+          hitlController.handleApprove(context);
+        }
         return;
       } else if (lower === 'n' || lower === 'no') {
-        hitlController.handleReject(context);
+        // 检查是安全确认还是 Claude 内部确认
+        if (context.securityPendingCommand) {
+          hitlController.handleSecurityReject(context);
+        } else {
+          hitlController.handleReject(context);
+        }
         return;
       }
       // 其他文本提示用户先处理审批
@@ -191,9 +204,13 @@ export class MessageHandler {
           }
 
           if (securityResult.level === RiskLevel.HIGH) {
-            // 高风险：需要用户确认（TODO: 集成 HITL）
+            // 高风险：需要用户确认
             const report = this.securityAnalyzer.generateRiskReport(securityResult);
-            channel.send(`${report}\n\n执行命令: \`${command}\``, { immediate: true });
+            const confirmMsg = `${report}\n\n**待执行命令:** \`${command}\`\n\n请回复 y(同意) 或 n(拒绝)`;
+            hitlController.setSecurityPending(context, command);
+            channel.send(confirmMsg, { immediate: true });
+            logger.info({ command }, '高风险命令等待用户确认');
+            return;
           }
 
           // 执行命令（结果会在 executeShellCommand 中发送）
@@ -308,9 +325,13 @@ export class MessageHandler {
     }
 
     if (securityResult.level === RiskLevel.HIGH) {
-      // 高风险：警告用户但继续执行（TODO: 集成 HITL 确认）
+      // 高风险：需要用户确认
       const report = this.securityAnalyzer.generateRiskReport(securityResult);
-      channel.send(`${report}\n\n⚠️ 继续执行...`, { immediate: true });
+      const confirmMsg = `${report}\n\n**待执行命令:** \`${command}\`\n\n请回复 y(同意) 或 n(拒绝)`;
+      hitlController.setSecurityPending(context, command);
+      channel.send(confirmMsg, { immediate: true });
+      logger.info({ command }, '高风险 Bash 命令等待用户确认');
+      return;
     }
 
     // 执行命令

@@ -50,6 +50,61 @@ export class HitlController {
   }
 
   /**
+   * 处理安全确认同意
+   * @param {object} context - 上下文对象
+   * @param {object} app - OpenHermit 实例（用于访问 executeShellCommand）
+   */
+  handleSecurityApprove(context, app) {
+    const { channel } = context;
+    const pendingCommand = context.securityPendingCommand;
+    const pendingCallback = context.securityPendingCallback;
+
+    // 恢复状态
+    context.hitlActive = false;
+    context.securityPendingCommand = null;
+    context.securityPendingCallback = null;
+
+    channel.send('✅ 已批准执行高风险命令\n');
+
+    // 执行待执行的命令
+    if (pendingCallback) {
+      pendingCallback();
+    } else if (pendingCommand) {
+      logger.info({ command: pendingCommand }, '执行用户批准的高风险命令');
+      app.executeShellCommand(pendingCommand, context);
+    }
+  }
+
+  /**
+   * 处理安全确认拒绝
+   * @param {object} context - 上下文对象
+   */
+  handleSecurityReject(context) {
+    const { channel } = context;
+    const pendingCommand = context.securityPendingCommand;
+
+    // 恢复状态
+    context.hitlActive = false;
+    context.securityPendingCommand = null;
+    context.securityPendingCallback = null;
+
+    channel.send('❌ 已拒绝，高风险命令未执行\n');
+    logger.info({ command: pendingCommand }, '用户拒绝执行高风险命令');
+  }
+
+  /**
+   * 设置安全确认待执行状态
+   * @param {object} context - 上下文对象
+   * @param {string} command - 待执行的命令
+   * @param {function} callback - 执行回调（可选）
+   */
+  setSecurityPending(context, command, callback = null) {
+    context.hitlActive = true;
+    context.securityPendingCommand = command;
+    context.securityPendingCallback = callback;
+  }
+
+  /**
    * 处理 ESC 指令：终止 Claude Code 当前任务
    * 发送两次 ESC 键来中断当前操作
    * @param {object} context - 上下文对象

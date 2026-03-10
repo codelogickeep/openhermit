@@ -62,7 +62,7 @@ class IntentParser {
   async parse(userMessage) {
     const trimmed = userMessage.trim();
 
-    // 1. 快速规则匹配（- 前缀的系统命令）
+    // 1. 快速规则匹配 - 仅处理系统命令
     const simpleResult = this.quickParseSimple(trimmed);
     if (simpleResult) {
       logger.debug({ intent: simpleResult }, '系统命令，快速匹配');
@@ -79,7 +79,7 @@ class IntentParser {
   }
 
   /**
-   * 快速规则匹配 - 仅处理极简单的输入
+   * 快速规则匹配 - 仅处理系统命令（- 前缀）
    * @param {string} userMessage - 用户消息
    * @returns {object|null} 意图对象或 null
    */
@@ -104,17 +104,17 @@ class IntentParser {
       };
     }
 
-    // 其他输入都转发给 Claude
     return null;
   }
 
   /**
-   * 快速规则匹配
+   * 快速规则匹配 - 完整版（用于活跃模式下的交互解析）
    * @param {string} userMessage - 用户消息
    * @returns {object|null} 意图对象或 null
    */
   quickParse(userMessage) {
     const trimmed = userMessage.trim();
+    const lower = trimmed.toLowerCase();
 
     // 空消息
     if (!trimmed) {
@@ -134,16 +134,7 @@ class IntentParser {
       };
     }
 
-    // 其他所有内容：转发给 Claude
-    return {
-      type: IntentTypes.CLAUDE_COMMAND,
-      command: trimmed,
-      params: {},
-      confidence: 1.0
-    };
-
     // y/n 确认
-    const lower = trimmed.toLowerCase();
     if (lower === 'y' || lower === 'yes') {
       return {
         type: IntentTypes.CONVERSATION,
@@ -195,7 +186,7 @@ class IntentParser {
       };
     }
 
-    // 中文启动命令（启动claude、启动 claude、开启claude 等）
+    // 中文启动命令
     const claudeStartPatterns = ['启动claude', '启动 claude', '开启claude', '开启 claude', '运行claude', '运行 claude', 'start claude'];
     for (const pattern of claudeStartPatterns) {
       if (lower === pattern || trimmed === pattern) {
@@ -204,30 +195,6 @@ class IntentParser {
           command: '开始对话',
           params: { explicit: true },
           confidence: 1.0
-        };
-      }
-    }
-
-    // 常见 shell 命令（精确匹配）
-    const exactShellCommands = ['ls', 'pwd', 'clear', 'exit', 'date', 'whoami'];
-    if (exactShellCommands.includes(trimmed)) {
-      return {
-        type: IntentTypes.SHELL_COMMAND,
-        command: trimmed,
-        params: {},
-        confidence: 0.95
-      };
-    }
-
-    // 带参数的 shell 命令
-    const shellPrefixes = ['ls ', 'cd ', 'cat ', 'grep ', 'find ', 'mkdir ', 'rm ', 'cp ', 'mv ', 'git ', 'npm ', 'node '];
-    for (const prefix of shellPrefixes) {
-      if (trimmed.startsWith(prefix)) {
-        return {
-          type: IntentTypes.SHELL_COMMAND,
-          command: trimmed,
-          params: {},
-          confidence: 0.9
         };
       }
     }
@@ -247,9 +214,8 @@ class IntentParser {
 
     // 英文开发关键词
     const engDevKeywords = ['help me', 'analyze', 'create', 'write', 'modify', 'fix', 'implement', 'add', 'remove', 'explain', 'refactor', 'optimize'];
-    const lowerTrimmed = lower;
     for (const keyword of engDevKeywords) {
-      if (lowerTrimmed.includes(keyword)) {
+      if (lower.includes(keyword)) {
         return {
           type: IntentTypes.CLAUDE_COMMAND,
           command: trimmed,
@@ -259,7 +225,7 @@ class IntentParser {
       }
     }
 
-    // 默认：如果当前 Claude 活跃，作为对话；否则作为 Claude 命令
+    // 默认：根据会话状态决定
     return {
       type: this.session.mode === 'claude_active' ? IntentTypes.CONVERSATION : IntentTypes.CLAUDE_COMMAND,
       command: trimmed,

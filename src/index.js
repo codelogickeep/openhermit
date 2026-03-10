@@ -113,6 +113,10 @@ class OpenHermit {
     this.hitlActive = false;
     this.pausedBuffer = '';
 
+    // 安全确认状态
+    this.securityPendingCommand = null;
+    this.securityPendingCallback = null;
+
     // 终端输出缓冲区（用于 LLM 上下文分析）
     this.terminalBuffer = '';
     this.maxBufferSize = 5000; // 最大缓冲区大小
@@ -172,6 +176,10 @@ class OpenHermit {
       lastAnalyzedPosition: this.lastAnalyzedPosition,
       lastOutputTime: this.lastOutputTime,
 
+      // 安全确认状态
+      securityPendingCommand: this.securityPendingCommand,
+      securityPendingCallback: this.securityPendingCallback,
+
       // 任务状态（兼容旧代码）
       taskStatus: this.taskManager.status,
 
@@ -180,6 +188,9 @@ class OpenHermit {
       terminalLogger: this.terminalLogger,
       systemCommands: this.systemCommands,
       hitlController: this.hitlController,
+
+      // app 引用（用于安全确认执行）
+      app: this,
 
       // 方法绑定
       writeCommand: this.writeCommand.bind(this),
