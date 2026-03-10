@@ -383,12 +383,21 @@ export class MessageHandler {
           const steppedInput = interactionAnalyzer.generateSteppedInput(result.steps, 50);
           logger.info({ steppedInput: steppedInput.map(s => ({ input: s.input.replace(/\x1b/g, '\\e').replace(/\r/g, '\\r'), delay: s.delay })) }, '🎹 步进写入 PTY');
 
-          let totalDelay = 0;
-          for (const step of steppedInput) {
-            setTimeout(() => {
-              pty.write(step.input);
-            }, totalDelay);
-            totalDelay += step.delay;
+          // 如果只有一步且是回车，直接同步写入（避免 setTimeout 问题）
+          if (steppedInput.length === 1 && steppedInput[0].input === '\r') {
+            logger.info('⌨️ 直接写入回车（单步优化）');
+            pty.write('\r');
+          } else {
+            // 多步操作：使用 setTimeout 延迟
+            let totalDelay = 0;
+            for (const step of steppedInput) {
+              const currentDelay = totalDelay;
+              setTimeout(() => {
+                logger.info({ input: step.input.replace(/\x1b/g, '\\e').replace(/\r/g, '\\r'), delay: currentDelay }, '⌨️ 延迟写入 PTY');
+                pty.write(step.input);
+              }, totalDelay);
+              totalDelay += step.delay;
+            }
           }
         } else if (result.selectionType === 'number') {
           // 数字选择模式：直接写入数字和回车
