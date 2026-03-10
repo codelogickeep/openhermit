@@ -4,7 +4,66 @@
  */
 
 import http from 'http';
+import { exec } from 'child_process';
 import logger from '../utils/logger.js';
+
+/**
+ * 检查端口是否被占用
+ * @param {number} port - 端口号
+ * @returns {Promise<number|null>} 占用端口的进程 PID，null 表示端口空闲
+ */
+async function findProcessUsingPort(port) {
+  return new Promise((resolve) => {
+    // macOS/Linux 使用 lsof
+    exec(`lsof -i :${port} -t`, (error, stdout) => {
+      if (error || !stdout.trim()) {
+        resolve(null);
+        return;
+      }
+      const pid = parseInt(stdout.trim().split('\n')[0]);
+      resolve(isNaN(pid) ? null : pid);
+    });
+  });
+}
+
+/**
+ * 终止占用端口的进程
+ * @param {number} pid - 进程 PID
+ * @returns {Promise<boolean>} 是否成功终止
+ */
+async function killProcess(pid) {
+  return new Promise((resolve) => {
+    exec(`kill -9 ${pid}`, (error) => {
+      if (error) {
+        logger.warn({ pid, error: error.message }, '终止进程失败');
+        resolve(false);
+      } else {
+        logger.info({ pid }, '✅ 已终止残留进程');
+        resolve(true);
+      }
+    });
+  });
+}
+
+/**
+ * 清理占用端口的残留进程
+ * @param {number} port - 端口号
+ * @returns {Promise<boolean>} 是否成功清理
+ */
+async function cleanupPort(port) {
+  const pid = await findProcessUsingPort(port);
+  if (pid) {
+    logger.warn({ port, pid }, '⚠️ 发现端口被残留进程占用，尝试清理...');
+    const killed = await killProcess(pid);
+    if (killed) {
+      // 等待端口释放
+      await new Promise(r => setTimeout(r, 500));
+      return true;
+    }
+    return false;
+  }
+  return true; // 端口未被占用
+}
 
 /**
  * IPC Server 类
@@ -15,16 +74,54 @@ class IPCServer {
     this.server = null;
     this.eventHandlers = new Map();
     this.isRunning = false;
+    this.cleanupRegistered = false;
+  }
+
+  /**
+   * 注册进程退出清理
+   */
+  registerCleanup() {
+    if (this.cleanupRegistered) return;
+    this.cleanupRegistered = true;
+
+    const cleanup = () => {
+      if (this.server) {
+        this.server.close();
+        logger.info('🧹 IPC Server 已在进程退出时清理');
+      }
+    };
+
+    process.on('exit', cleanup);
+    process.on('SIGINT', () => {
+      cleanup();
+      process.exit(0);
+    });
+    process.on('SIGTERM', () => {
+      cleanup();
+      process.exit(0);
+    });
   }
 
   /**
    * 启动 IPC 服务
+   * @param {boolean} autoCleanup - 是否自动清理残留进程（默认 true）
    * @returns {Promise<void>}
    */
-  async start() {
+  async start(autoCleanup = true) {
     if (this.isRunning) {
       logger.warn('IPC Server 已在运行');
       return;
+    }
+
+    // 注册退出清理
+    this.registerCleanup();
+
+    // 自动清理残留进程
+    if (autoCleanup) {
+      const cleaned = await cleanupPort(this.port);
+      if (!cleaned) {
+        throw new Error(`端口 ${this.port} 被占用且无法清理`);
+      }
     }
 
     return new Promise((resolve, reject) => {
