@@ -379,8 +379,8 @@ export class MessageHandler {
 
         // 根据选择类型发送到 PTY
         if (result.selectionType === 'arrow' && result.steps) {
-          // 方向键选择模式：步进写入，每次按键之间添加延迟
-          const steppedInput = interactionAnalyzer.generateSteppedInput(result.steps, 50);
+          // 方向键选择模式：步进写入，每次按键之间添加延迟（500ms 确保终端稳定接收）
+          const steppedInput = interactionAnalyzer.generateSteppedInput(result.steps, 500);
           logger.info({ steppedInput: steppedInput.map(s => ({ input: s.input.replace(/\x1b/g, '\\e').replace(/\r/g, '\\r'), delay: s.delay })) }, '🎹 步进写入 PTY');
 
           // 如果只有一步且是回车，直接同步写入（避免 setTimeout 问题）
