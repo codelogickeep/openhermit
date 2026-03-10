@@ -187,12 +187,24 @@ export class SystemCommands {
    * @param {object} context - 上下文对象
    */
   async handleStatus(context) {
-    const { channel, pty, intentParser, taskStatus, terminalBuffer, smartMode, llmClient } = context;
+    const { channel, pty, intentParser, taskStatus, terminalBuffer, smartMode, llmClient, hookHandler } = context;
     const session = intentParser.getSession();
+
+    // 获取 HookHandler 的交互状态
+    const interactionState = hookHandler ? hookHandler.getState() : 'unknown';
+    const interactionStateMap = {
+      'idle': '⚪ 空闲',
+      'running': '🔄 运行中',
+      'waiting_confirm': '⏳ 等待确认',
+      'waiting_input': '✋ 等待输入',
+      'completed': '✅ 已完成',
+      'unknown': '❓ 未知'
+    };
 
     let msg = '## 📊 系统状态\n\n';
     msg += `| 项目 | 状态 |\n|------|------|\n`;
     msg += `| 会话模式 | ${session.mode === 'claude_active' ? '🟢 Claude 活跃' : '⚪ 空闲'} |\n`;
+    msg += `| 交互状态 | ${interactionStateMap[interactionState] || interactionState} |\n`;
     msg += `| 任务状态 | ${taskStatus.isRunning ? '🔄 运行中' : '⚪ 空闲'} |\n`;
     msg += `| 静默模式 | ${channel.silentMode ? '是' : '否'} |\n`;
 
@@ -205,8 +217,15 @@ export class SystemCommands {
 
     msg += `\n**当前目录:** \`${pty.getWorkingDir()}\``;
 
-    // 使用 LLM 总结最近输出（使用完整的终端缓冲区）
-    if (terminalBuffer && terminalBuffer.trim().length > 50) {
+    // 如果是等待输入状态，直接提示用户
+    if (interactionState === 'waiting_input') {
+      msg += '\n\n### ✋ 等待操作\n';
+      msg += '**Claude 正在等待您的输入**，请直接发送消息或选择。';
+    } else if (interactionState === 'waiting_confirm') {
+      msg += '\n\n### ⏳ 等待确认\n';
+      msg += '**有待确认的操作**，请回复 `y` 确认或 `n` 拒绝。';
+    } else if (terminalBuffer && terminalBuffer.trim().length > 50) {
+      // 使用 LLM 总结最近输出（使用完整的终端缓冲区）
       msg += '\n\n### 📝 最近输出\n';
 
       if (smartMode) {
