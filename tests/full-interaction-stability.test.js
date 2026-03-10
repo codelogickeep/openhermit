@@ -7,8 +7,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { getLLMClient } from '../src/llm/client.js';
 import { InteractionPrompts } from '../src/llm/prompts/interaction.js';
 
-// 真实日志数据 - 终端输出
-const realTerminalOutput = `
+// 真实日志数据 - 终端输出（有空格版本）
+const realTerminalOutputWithSpaces = `
 To change this later, run /theme
 
 ❯ 1. Dark mode ✔
@@ -24,6 +24,27 @@ To change this later, run /theme
   4 }
   Syntax highlighting available only in native build
 `;
+
+// 真实日志数据 - 终端输出（无空格版本，更接近真实）
+const realTerminalOutputNoSpaces = `
+To change this later, run /theme
+
+❯1.Darkmode✔
+  2.Lightmode
+  3.Darkmode(colorblind-friendly)
+  4.Lightmode(colorblind-friendly)
+  5.Darkmode(ANSIcolorsonly)
+  6.Lightmode(ANSIcolorsonly)
+
+  1 function greet() {
+  2    console.log("Hello, World!");
+- 3    console.log("Hello, Claude!");
+  4 }
+  Syntax highlighting available only in native build
+`;
+
+// 使用无空格版本作为默认测试数据
+const realTerminalOutput = realTerminalOutputNoSpaces;
 
 describe('完整交互流程稳定性测试', () => {
   let llmClient;

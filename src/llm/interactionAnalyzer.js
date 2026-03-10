@@ -34,6 +34,40 @@ class LLMInteractionAnalyzer {
   }
 
   /**
+   * 执行 steps 数组，生成 PTY 输入
+   * @param {Array} steps - 操作步骤数组
+   * @returns {string} PTY 输入序列
+   */
+  executeSteps(steps) {
+    let input = '';
+
+    for (const step of steps) {
+      switch (step.action) {
+        case 'arrow_down':
+          for (let i = 0; i < (step.count || 1); i++) {
+            input += '\x1b[B';  // 下箭头
+          }
+          break;
+        case 'arrow_up':
+          for (let i = 0; i < (step.count || 1); i++) {
+            input += '\x1b[A';  // 上箭头
+          }
+          break;
+        case 'type':
+          input += step.text || '';
+          break;
+        case 'enter':
+          input += '\r';  // 回车
+          break;
+        default:
+          logger.warn({ action: step.action }, '未知的操作类型');
+      }
+    }
+
+    return input;
+  }
+
+  /**
    * 分析终端输出
    * @param {string} terminalOutput - 终端输出
    * @returns {Promise<object>} 分析结果
@@ -49,16 +83,23 @@ class LLMInteractionAnalyzer {
         const allLines = terminalOutput.split('\n');
         const optionLines = allLines.filter(line => /[❯→✔]|\d+\.\s/.test(line)).slice(0, 10);
 
+        // ===== 详细调试：打印发送给 LLM 的原始终端输出 =====
+        console.log('\n' + '='.repeat(80));
+        console.log('📤 完整终端输出（发送给 analyzeOutput LLM):');
+        console.log('='.repeat(80));
+        console.log(terminalOutput);
+        console.log('='.repeat(80));
+
         logger.info({
           terminalOutputLength: terminalOutput.length,
           terminalOutputPreview: terminalOutput.slice(-500),
-          // 打印选项相关的行（用于调试）
+          // 打印选项相关的行
           optionLines: optionLines,
-          // 打印包含数字的行（用于调试 defaultOptionIndex 识别）
+          // 打印包含数字的行
           linesWithNumbers: allLines.filter(line => /\d+\./.test(line)).slice(0, 10),
           // 打印包含 ❯ 的行（关键！）
           linesWithArrow: allLines.filter(line => /❯|→/.test(line)).slice(0, 5),
-          // 打印选项区域的完整内容（前后10行）
+          // 打印选项区域的完整内容
           optionAreaContext: this.extractOptionArea(terminalOutput)
         }, '📤 发送给 LLM 分析的内容（详细调试）');
 
@@ -185,77 +226,76 @@ class LLMInteractionAnalyzer {
         if (jsonMatch) {
           const result = JSON.parse(jsonMatch[0]);
 
-          // 根据选择类型生成正确的输入序列
-          if (result.selectionType === 'arrow' || selectionType === 'arrow') {
-            // 方向键选择模式
-            // 优先使用 LLM 返回的 defaultOptionIndex，其次使用 context 中的值
-            const actualDefaultIndex = result.defaultOptionIndex ?? defaultOptionIndex;
-            let arrowCount;
+          console.log('\n' + '='.repeat(80));
+          console.log('📥 parseReply LLM 返回结果:');
+          console.log(JSON.stringify(result, null, 2));
+          console.log('='.repeat(80));
 
-            if (result.targetOption !== undefined && actualDefaultIndex !== undefined) {
-              // LLM 返回了目标选项和默认选项，计算箭头数
-              arrowCount = result.targetOption - actualDefaultIndex;
-            } else if (result.arrowCount !== undefined) {
-              arrowCount = result.arrowCount;
-            } else if (result.input && /^\d+$/.test(result.input.trim())) {
-              // 从 input 中提取数字
-              const targetIndex = parseInt(result.input.trim());
-              arrowCount = targetIndex - actualDefaultIndex;
-            } else {
-              // 尝试从用户回复中提取数字
-              const numMatch = userReply.match(/\d+/);
-              if (numMatch) {
-                arrowCount = parseInt(numMatch[0]) - actualDefaultIndex;
-              } else {
-                arrowCount = 0;
-              }
-            }
-
-            // 生成方向键序列
-            let input = '';
-            for (let i = 0; i < arrowCount; i++) {
-              input += '\x1b[B';  // 下箭头
-            }
-            input += '\r';  // 回车确认
-
+          // 如果 LLM 返回了 steps 数组，根据 steps 生成 PTY 输入
+          if (result.steps && Array.isArray(result.steps)) {
+            const input = this.executeSteps(result.steps);
             result.input = input;
-            result.selectionType = 'arrow';
-            result.arrowCount = arrowCount;
-            result.defaultOptionIndex = actualDefaultIndex;
-            result.feedback = result.feedback || `已选择第 ${arrowCount + actualDefaultIndex} 个选项`;
+
+            console.log('\n📦 steps 执行结果:');
+            console.log('steps:', JSON.stringify(result.steps));
+            console.log('生成的 PTY 输入:', JSON.stringify(input));
 
             logger.info({
-              result,
-              contextSelectionType: selectionType,
-              contextDefaultOptionIndex: defaultOptionIndex,
-              actualDefaultIndex,
-              calculatedArrowCount: arrowCount
-            }, '🤖 LLM 解析用户回复成功（方向键模式）');
+              steps: result.steps,
+              selectionType: result.selectionType,
+              defaultOptionIndex: result.defaultOptionIndex,
+              targetOption: result.targetOption,
+              generatedInput: input
+            }, '🤖 LLM 解析用户回复成功（使用 steps）');
+          } else {
+            // 降级：根据 selectionType 手动计算
+            if (result.selectionType === 'arrow' || selectionType === 'arrow') {
+              // 方向键选择模式
+              const actualDefaultIndex = result.defaultOptionIndex ?? defaultOptionIndex;
+              let arrowCount;
 
-          } else if (result.selectionType === 'number' || selectionType === 'number') {
-            // 数字选择模式
-            result.selectionType = 'number';
-            if (result.input) {
-              result.input = result.input.trim() + '\r';
-            } else {
+              if (result.targetOption !== undefined && actualDefaultIndex !== undefined) {
+                arrowCount = result.targetOption - actualDefaultIndex;
+              } else if (result.arrowCount !== undefined) {
+                arrowCount = result.arrowCount;
+              } else {
+                const numMatch = userReply.match(/\d+/);
+                if (numMatch) {
+                  arrowCount = parseInt(numMatch[0]) - actualDefaultIndex;
+                } else {
+                  arrowCount = 0;
+                }
+              }
+
+              // 生成方向键序列
+              let input = '';
+              for (let i = 0; i < arrowCount; i++) {
+                input += '\x1b[B';  // 下箭头
+              }
+              input += '\r';  // 回车确认
+
+              result.input = input;
+              result.selectionType = 'arrow';
+              result.arrowCount = arrowCount;
+              result.defaultOptionIndex = actualDefaultIndex;
+              result.feedback = result.feedback || `已选择第 ${arrowCount + actualDefaultIndex} 个选项`;
+
+              logger.info({
+                result,
+                calculatedArrowCount: arrowCount
+              }, '🤖 LLM 解析用户回复成功（降级计算）');
+            } else if (result.selectionType === 'number' || selectionType === 'number') {
+              result.selectionType = 'number';
               result.input = userReply.trim() + '\r';
-            }
-            logger.info({ result }, '🤖 LLM 解析用户回复成功（数字模式）');
-
-          } else if (result.selectionType === 'confirm' || selectionType === 'confirm') {
-            // 确认模式
-            result.selectionType = 'confirm';
-            if (!result.input) {
+            } else if (result.selectionType === 'confirm' || selectionType === 'confirm') {
+              result.selectionType = 'confirm';
               const lower = userReply.toLowerCase();
               if (lower === 'y' || lower === 'yes' || lower === '是' || lower === '同意') {
                 result.input = 'y\r';
               } else {
                 result.input = 'n\r';
               }
-            } else {
-              result.input = result.input.trim() + '\r';
             }
-            logger.info({ result }, '🤖 LLM 解析用户回复成功（确认模式）');
           }
 
           return result;

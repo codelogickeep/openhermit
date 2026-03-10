@@ -54,15 +54,25 @@ export const InteractionPrompts = {
   2. Light mode
 \`\`\`
 - \`❯\` 在第1行开头
-- 该行的数字是 \`1\`
-- 所以 **defaultOptionIndex = 1**（不是2！）
+- 该行的数字是 \`1\`（从 "1. Dark mode" 中提取）
+- 所以 **defaultOptionIndex = 1**
 
+**无空格示例**（终端输出可能没有空格）：
 \`\`\`
-  1. Dark mode
-❯ 2. Light mode ✔
+❯1.Darkmode✔
+  2.Lightmode
+\`\`\`
+- \`❯\` 在第1行开头
+- 该行的数字是 \`1\`（从 "1.Darkmode" 中提取第一个数字）
+- 所以 **defaultOptionIndex = 1**
+
+**另一个示例**：
+\`\`\`
+  1.Darkmode
+❯2.Lightmode✔
 \`\`\`
 - \`❯\` 在第2行开头
-- 该行的数字是 \`2\`
+- 该行的数字是 \`2\`（从 "2.Lightmode" 中提取第一个数字）
 - 所以 **defaultOptionIndex = 2**
 
 **常见错误（不要这样）**：
@@ -82,65 +92,138 @@ export const InteractionPrompts = {
 
   /**
    * 用户回复解析 Prompt
-   * 将用户的自然语言选择转换为终端输入
+   * 将用户的自然语言选择转换为 PTY 操作步骤
    */
-  parseReply: `你是一个用户意图解析助手。
+  parseReply: `你是一个终端操作步骤生成器。
 
-【之前的终端输出】
+【终端输出】
 """
 {{terminalOutput}}
 """
 
-【之前的分析结果】
+【之前分析结果】
 {{previousAnalysis}}
 
-【用户的回复】
+【用户回复】
 {{userReply}}
 
-请根据**分析结果中的 selectionType** 将用户回复转换为终端输入。
+请根据终端输出和用户回复，生成 PTY 操作步骤。
 
-## 关键：根据 selectionType 处理
+## 关键：必须返回以下字段
 
-### 如果 selectionType === "arrow"（方向键选择模式）
-
-**步骤1：从终端输出中识别默认选项位置**
-- 找到有 \`❯\` 或 \`→\` 标记的行
-- 提取该行的数字，这就是 \`defaultOptionIndex\`
-- 例如：\`❯ 1. Dark mode ✔\` → defaultOptionIndex = 1
-
-**步骤2：识别用户想选的选项**
-- 从用户回复中提取数字
-- 例如：用户回复 "2" → targetOption = 2
-
-**步骤3：计算 arrowCount**
-- arrowCount = targetOption - defaultOptionIndex
-- 例如：targetOption = 2, defaultOptionIndex = 1 → arrowCount = 1
-
-**返回格式**：
+对于**方向键选择模式**（有 ❯ 或 → 标记），必须返回：
 \`\`\`json
 {
-  "understood": true,
   "selectionType": "arrow",
   "defaultOptionIndex": 1,
   "targetOption": 2,
-  "arrowCount": 1,
+  "steps": [
+    { "action": "arrow_down", "count": 1 },
+    { "action": "enter" }
+  ],
   "feedback": "已选择 Light mode"
 }
 \`\`\`
 
-### 如果 selectionType === "number"（数字选择模式）
-- 直接输入用户选择的数字
-- 返回：{ "selectionType": "number", "input": "2" }
+## 重要：识别 defaultOptionIndex
 
-### 如果 selectionType === "confirm"（确认模式）
-- y/yes/是/同意 → input: "y"
-- n/no/否/拒绝 → input: "n"
-- 返回：{ "selectionType": "confirm", "input": "y" }
+**defaultOptionIndex** 是 \`❯\` 所在行的数字（从1开始）。
 
-## 重要提示
-1. **必须从终端输出中识别 defaultOptionIndex**，不要依赖 previousAnalysis 中的值
-2. arrowCount = targetOption - defaultOptionIndex
-3. 只返回 JSON，不要其他内容`,
+**示例1**：
+\`\`\`
+❯ 1. Dark mode ✔
+  2. Light mode
+\`\`\`
+- \`❯\` 在第1行，数字是 1
+- **defaultOptionIndex = 1**
+
+**示例2（无空格）**：
+\`\`\`
+❯1.Darkmode✔
+  2.Lightmode
+\`\`\`
+- \`❯\` 在第1行，提取第一个数字是 1
+- **defaultOptionIndex = 1**
+
+**示例3**：
+\`\`\`
+  1.Darkmode
+❯2.Lightmode✔
+\`\`\`
+- \`❯\` 在第2行，数字是 2
+- **defaultOptionIndex = 2**
+
+## 选择模式判断
+
+### 1. 方向键选择模式 (selectionType: "arrow")
+特征：有 \`❯\` 或 \`→\` 标记
+
+**示例**：用户回复 "2"，当前光标在第1个
+\`\`\`json
+{
+  "selectionType": "arrow",
+  "defaultOptionIndex": 1,
+  "targetOption": 2,
+  "steps": [
+    { "action": "arrow_down", "count": 1 },
+    { "action": "enter" }
+  ],
+  "feedback": "已选择第2个选项"
+}
+\`\`\`
+
+**注意**：
+- defaultOptionIndex 从终端输出中提取（找 ❯ 所在行的数字）
+- targetOption 是用户想选的选项序号
+- arrow_down 的 count = targetOption - defaultOptionIndex
+- **不要在 steps 中输入数字！只能用 arrow_down/arrow_up + enter**
+
+### 2. 数字输入模式 (selectionType: "number")
+特征：简单数字列表，无 \`❯\` 标记
+
+**示例**：用户回复 "2"
+\`\`\`json
+{
+  "selectionType": "number",
+  "steps": [
+    { "action": "type", "text": "2" },
+    { "action": "enter" }
+  ],
+  "feedback": "已选择 修改现有文件"
+}
+\`\`\`
+
+### 3. 确认模式 (selectionType: "confirm")
+特征：有 (y/n) 或 [Y/n]
+
+**示例**：用户回复 "y"
+\`\`\`json
+{
+  "selectionType": "confirm",
+  "steps": [
+    { "action": "type", "text": "y" },
+    { "action": "enter" }
+  ],
+  "feedback": "已确认"
+}
+\`\`\`
+
+## 操作步骤类型
+
+| action | 参数 | 说明 |
+|--------|------|------|
+| \`arrow_up\` | count | 按上箭头 count 次 |
+| \`arrow_down\` | count | 按下箭头 count 次 |
+| \`type\` | text | 输入文本 |
+| \`enter\` | - | 按回车 |
+
+## 关键规则
+
+1. **方向键模式不能输入数字**，只能用 arrow_down + enter
+2. **必须从终端输出中提取 defaultOptionIndex**（找 ❯ 行的数字）
+3. **targetOption 是用户想选的选项序号**（从用户回复中提取）
+4. **只返回 JSON**，不要其他内容
+5. **必须返回 steps 数组**`,
 
   /**
    * 选择提示解析 Prompt

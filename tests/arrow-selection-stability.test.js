@@ -7,16 +7,16 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { getLLMClient } from '../src/llm/client.js';
 import { InteractionPrompts } from '../src/llm/prompts/interaction.js';
 
-// 真实日志数据
+// 真实日志数据（无空格版本，更接近真实 PTY 输出）
 const realTerminalOutput = `
 To change this later, run /theme
 
-❯ 1. Dark mode ✔
-  2. Light mode
-  3. Dark mode (colorblind-friendly)
-  4. Light mode (colorblind-friendly)
-  5. Dark mode (ANSI colors only)
-  6. Light mode (ANSI colors only)
+❯1.Darkmode✔
+  2.Lightmode
+  3.Darkmode(colorblind-friendly)
+  4.Lightmode(colorblind-friendly)
+  5.Darkmode(ANSIcolorsonly)
+  6.Lightmode(ANSIcolorsonly)
 
   1 function greet() {
   2    console.log("Hello, World!");
@@ -30,19 +30,19 @@ const realAnalysis = {
   needsInteraction: true,
   type: "selection",
   selectionType: "arrow",
-  defaultOptionIndex: 1,  // 注意：LLM 之前返回的是 2，但实际应该是 1（第1个选项有 ❯ 和 ✔）
+  defaultOptionIndex: 1,  // ❯ 在第1行，数字是 1
   taskCompleted: false,
   context: {
     question: "请选择最适合你终端的文本样式。",
     options: [
-      "Dark mode",
-      "Light mode",
-      "Dark mode (colorblind-friendly)",
-      "Light mode (colorblind-friendly)",
-      "Dark mode (ANSI colors only)",
-      "Light mode (ANSI colors only)"
+      "Darkmode",
+      "Lightmode",
+      "Darkmode(colorblind-friendly)",
+      "Lightmode(colorblind-friendly)",
+      "Darkmode(ANSIcolorsonly)",
+      "Lightmode(ANSIcolorsonly)"
     ],
-    additionalInfo: "当前高亮选中第1项 'Dark mode'，并标记为 ✔"
+    additionalInfo: "当前高亮选中第1项 'Darkmode'，并标记为 ✔"
   }
 };
 
