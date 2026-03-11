@@ -67,6 +67,6 @@
     "strip-ansi": "^6.0.1"
   },
   "devDependencies": {
-    "vitest": "^1.2.0"
+    "vitest": "^4.0.18"
   }
 }
