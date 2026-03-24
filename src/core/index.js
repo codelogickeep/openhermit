@@ -6,3 +6,4 @@
 export { IPCServer, getIPCServer, resetIPCServer } from './ipc-server.js';
 export { HookContext, getHookContext, resetHookContext } from './hook-context.js';
 export { HookHandler, getHookHandler, resetHookHandler, InteractionState } from './hook-handler.js';
+export { CommandManager, getCommandManager, resetCommandManager } from './command-manager.js';

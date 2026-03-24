@@ -3,10 +3,12 @@
  * 处理 Claude Code Hooks 发来的事件
  */
 
+import path from 'path';
 import logger from '../utils/logger.js';
 import { getHookContext } from './hook-context.js';
 import { getLLMClient } from '../llm/client.js';
 import { HookEventPrompts } from '../llm/prompts/hook-event.js';
+import { getCommandManager } from './command-manager.js';
 
 /**
  * 交互状态枚举
@@ -26,7 +28,11 @@ class HookHandler {
   constructor() {
     this.hookContext = getHookContext();
     this.llmClient = getLLMClient();
+    this.commandManager = getCommandManager();
     this.currentState = InteractionState.IDLE;
+
+    // 当前会话信息
+    this.currentSession = null;
 
     // 回调函数
     this.onStateChange = null;
@@ -68,7 +74,13 @@ class HookHandler {
    * @param {object} data - 事件数据
    */
   async handlePreToolUse(data) {
-    logger.info({ toolName: data.tool_name }, '收到 PreToolUse 事件');
+    logger.info({ toolName: data.tool_name, permissionMode: data.permission_mode }, '收到 PreToolUse 事件');
+
+    // 如果是 bypassPermissions 模式，不需要用户确认
+    if (data.permission_mode === 'bypassPermissions') {
+      logger.debug('bypassPermissions 模式，跳过确认通知');
+      return;
+    }
 
     // 提取关键信息
     const event = {
@@ -77,6 +89,7 @@ class HookHandler {
       toolName: data.tool_name,
       toolInput: data.tool_input,
       transcriptPath: data.transcript_path,
+      permissionMode: data.permission_mode,
       timestamp: Date.now()
     };
 
@@ -208,26 +221,43 @@ class HookHandler {
   async handleNotification(data) {
     logger.info({ notification: data.notification }, '收到 Notification 事件');
 
+    // 提取通知类型
+    const notificationType = data.notification_type || this.getNotificationType(data.notification);
+
+    // 更新会话信息
+    this.currentSession = {
+      sessionId: data.session_id,
+      cwd: data.cwd,
+      projectName: data.cwd ? path.basename(data.cwd) : 'unknown',
+      state: notificationType === 'idle_prompt' ? 'idle' : 'running',
+      timestamp: Date.now()
+    };
+
+    // 更新 CommandManager 的活跃会话
+    this.commandManager.setActiveSession(this.currentSession);
+
     const event = {
       hookType: 'Notification',
       sessionId: data.session_id,
+      cwd: data.cwd,
       notification: data.notification,
+      notificationType: notificationType,
       transcriptPath: data.transcript_path,
       timestamp: Date.now()
     };
 
-    // 判断通知类型
-    const notificationType = this.getNotificationType(data.notification);
+    // 保存上下文
+    this.hookContext.set(event);
 
-    if (notificationType === 'idle') {
+    if (notificationType === 'idle_prompt' || notificationType === 'idle') {
       // 等待用户输入
-      this.hookContext.set(event);
       this.setState(InteractionState.WAITING_INPUT);
 
       if (this.onSendMessage) {
+        const message = this.generateWaitingInputMessage(event);
         this.onSendMessage({
           type: 'waiting_input',
-          message: '## ⏳ 等待输入\n\nClaude 正在等待您的输入...',
+          message: message,
           event: event
         });
       }
@@ -235,6 +265,20 @@ class HookHandler {
       // 需要权限确认（通常 PreToolUse 已经处理）
       logger.debug('Notification: 权限请求');
     }
+  }
+
+  /**
+   * 生成等待输入消息
+   * @param {object} event - 事件数据
+   * @returns {string}
+   */
+  generateWaitingInputMessage(event) {
+    const projectName = event.cwd ? path.basename(event.cwd) : '未知项目';
+    return `## ⏳ 等待输入
+
+**项目**: \`${projectName}\`
+
+Claude Code 正在等待您的指令，请在钉钉发送消息。`;
   }
 
   /**
@@ -265,28 +309,73 @@ class HookHandler {
   async handleStop(data) {
     logger.info({ reason: data.stop_reason }, '收到 Stop 事件');
 
+    // 提取任务信息
+    const lastMessage = data.last_assistant_message || '';
+    const taskSummary = this.extractTaskSummary(lastMessage);
+
     const event = {
       hookType: 'Stop',
       sessionId: data.session_id,
+      cwd: data.cwd,
+      projectName: data.cwd ? path.basename(data.cwd) : 'unknown',
       stopReason: data.stop_reason,
       transcriptPath: data.transcript_path,
+      taskSummary: taskSummary,
       timestamp: Date.now()
     };
 
     // 切换状态
     this.setState(InteractionState.COMPLETED);
 
-    // 清除上下文
+    // 清除上下文和会话
     this.hookContext.clear();
+    this.commandManager.clearActiveSession();
 
     // 发送完成通知
     if (this.onSendMessage) {
+      const message = this.generateTaskCompletedMessage(event);
       this.onSendMessage({
         type: 'completed',
-        message: '## ✅ 任务完成\n\nClaude Code 已完成当前任务。',
+        message: message,
         event: event
       });
     }
+  }
+
+  /**
+   * 从最后一条消息中提取任务摘要
+   * @param {string} message - 消息内容
+   * @returns {string}
+   */
+  extractTaskSummary(message) {
+    if (!message) return '任务已完成';
+
+    // 尝试提取第一行或前100个字符作为摘要
+    const lines = message.split('\n').filter(l => l.trim());
+    if (lines.length > 0) {
+      const firstLine = lines[0].replace(/^#+\s*/, '').trim();
+      if (firstLine.length <= 100) {
+        return firstLine;
+      }
+      return firstLine.substring(0, 97) + '...';
+    }
+
+    return '任务已完成';
+  }
+
+  /**
+   * 生成任务完成消息
+   * @param {object} event - 事件数据
+   * @returns {string}
+   */
+  generateTaskCompletedMessage(event) {
+    const projectName = event.projectName || '未知项目';
+    return `## ✅ 任务完成
+
+**项目**: \`${projectName}\`
+**摘要**: ${event.taskSummary}
+
+请继续发送指令或等待下次任务完成。`;
   }
 
   /**

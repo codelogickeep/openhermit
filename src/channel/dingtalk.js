@@ -1,6 +1,6 @@
 import fs from 'fs';
 import { EventEmitter } from 'events';
-import { getDingTalkAppKey, getDingTalkAppSecret, getAllowedRootDir, getDingTalkUserId } from '../config/index.js';
+import { getDingTalkAppKey, getDingTalkAppSecret, getDingTalkUserId } from '../config/index.js';
 import logger from '../utils/logger.js';
 import debounce from 'lodash.debounce';
 
@@ -138,12 +138,6 @@ class DingTalkChannel extends EventEmitter {
         logger.info('钉钉 WebSocket 连接成功');
         this.connected = true;
         this.debouncedSend = debounce(this.doSend.bind(this), 1000);
-
-        // 发送启动消息给配置的用户
-        const userId = getDingTalkUserId();
-        if (userId) {
-          this.sendStartupMessage(userId);
-        }
       }
 
     } catch (error) {
@@ -151,7 +145,6 @@ class DingTalkChannel extends EventEmitter {
       this.mockMode = true;
       this.connected = true;
       this.debouncedSend = debounce(this.doSend.bind(this), 1000);
-      // 欢迎消息在收到用户第一条消息时发送
     }
   }
 
@@ -258,7 +251,7 @@ class DingTalkChannel extends EventEmitter {
    * @param {string} text - 文本内容
    * @param {object} context - 上下文信息（可选）
    */
-  send(text, context = {}) {
+  async send(text, context = {}) {
     if (!this.connected) {
       logger.warn('未连接钉钉，无法发送消息');
       return;
@@ -292,14 +285,14 @@ class DingTalkChannel extends EventEmitter {
       logger.debug({ text: preview }, '📤 触发立即发送');
       // 直接发送当前消息，不混入缓冲区
       const chunks = this.splitChunks(text);
-      chunks.forEach((chunk, i) => {
-        logger.debug({ index: i + 1, length: chunk.length }, '📤 立即发送消息');
+      for (let i = 0; i < chunks.length; i++) {
+        logger.debug({ index: i + 1, length: chunks[i].length }, '📤 立即发送消息');
         if (this.mockMode) {
-          console.log(chunk);
+          console.log(chunks[i]);
         } else {
-          this.sendToDingTalk(chunk);
+          await this.sendToDingTalk(chunks[i]);
         }
-      });
+      }
       return;
     }
 
@@ -368,7 +361,7 @@ class DingTalkChannel extends EventEmitter {
    * 强制立即发送（不经过策略）
    * @param {string} text - 文本内容
    */
-  sendImmediate(text) {
+  async sendImmediate(text) {
     if (!this.connected) {
       logger.warn('未连接钉钉，无法发送消息');
       return;
@@ -382,7 +375,7 @@ class DingTalkChannel extends EventEmitter {
       return;
     }
 
-    this.sendToDingTalk(text);
+    await this.sendToDingTalk(text);
   }
 
   /**
@@ -582,119 +575,6 @@ class DingTalkChannel extends EventEmitter {
     } catch (error) {
       logger.error({ error: error.response?.data || error.message }, 'batchSend 发送失败');
     }
-  }
-
-  /**
-   * 发送启动消息（主动推送给用户）
-   */
-  async sendStartupMessage(userId) {
-    const rootDir = getAllowedRootDir();
-    const startupMsg = `## 🦀 老板，系统已就绪
-
-**当前工作目录:** \`${rootDir}\`
-
-### 📖 OpenHermit 命令（- 前缀）
-| 命令 | 说明 |
-|------|------|
-| \`-cd <目录>\` | 切换工作目录 |
-| \`-ls\` | 查看可选目录 |
-| \`-claude [任务]\` | 启动 Claude Code |
-| \`-status\` | 查看执行状态 |
-| \`-help\` | 查看帮助 |
-
-### ⌨️ 快捷指令
-| 指令 | 说明 |
-|------|------|
-| \`esc\` | 终止 Claude 当前任务 |
-
-### 💡 使用说明
-- 带 \`-\` 前缀的命令由 OpenHermit 处理
-- 其他所有内容直接发送给 Claude 终端`;
-
-    try {
-      const accessToken = await this.getAccessToken();
-      await this.batchSend(startupMsg, accessToken);
-    } catch (error) {
-      // 静默失败
-    }
-  }
-
-  /**
-   * 发送欢迎消息
-   */
-  sendWelcome() {
-    const rootDir = getAllowedRootDir();
-
-    // 列出根目录下的子目录
-    let dirList = `- \`${rootDir}\``;
-    try {
-      const items = fs.readdirSync(rootDir);
-      const dirs = items.filter(item => {
-        try {
-          return fs.statSync(`${rootDir}/${item}`).isDirectory();
-        } catch { return false; }
-      });
-      if (dirs.length > 0) {
-        dirList = dirs.map(dir => `- \`${rootDir}/${dir}\``).join('\n');
-      }
-    } catch (e) {
-      logger.warn({ error: e.message }, '读取根目录失败');
-    }
-
-    const welcomeMsg = `## 🦀 欢迎使用 OpenHermit
-
-**当前工作目录:** \`${rootDir}\`
-
-### 📂 可选目录
-${dirList}
-
-### 📖 OpenHermit 命令（- 前缀）
-| 命令 | 说明 |
-|------|------|
-| \`-cd <目录>\` | 切换工作目录 |
-| \`-ls\` | 查看可选目录 |
-| \`-claude [任务]\` | 启动 Claude Code |
-| \`-status\` | 查看执行状态 |
-| \`-help\` | 查看帮助 |
-
-### ⌨️ 快捷指令
-| 指令 | 说明 |
-|------|------|
-| \`esc\` | 终止 Claude 当前任务 |
-
-### 💡 使用说明
-- 带 \`-\` 前缀的命令由 OpenHermit 处理
-- 其他所有内容直接发送给 Claude 终端`;
-
-    this.send(welcomeMsg);
-  }
-
-  /**
-   * 发送目录列表
-   */
-  sendDirList(currentDir) {
-    const rootDir = getAllowedRootDir();
-
-    let msg = `## 📂 目录列表\n\n**当前工作目录:** \`${currentDir}\`\n**白名单根目录:** \`${rootDir}\`\n\n`;
-
-    try {
-      const items = fs.readdirSync(rootDir);
-      const dirs = items.filter(item => {
-        const fullPath = `${rootDir}/${item}`;
-        return fs.statSync(fullPath).isDirectory();
-      });
-
-      if (dirs.length > 0) {
-        msg += '### 可选目录\n';
-        dirs.forEach(dir => msg += `- \`${rootDir}/${dir}\`\n`);
-      } else {
-        msg += '> 目录下没有子目录';
-      }
-    } catch (error) {
-      msg += `❌ 无法读取目录: ${error.message}`;
-    }
-
-    this.send(msg, { immediate: true });
   }
 
   /**

@@ -70,10 +70,11 @@ export function getDingTalkAppSecret() {
 }
 
 /**
- * 获取允许的工作目录根路径
+ * 获取允许的工作目录根路径（可选，已废弃）
+ * @deprecated 监控模式下不再需要
  */
 export function getAllowedRootDir() {
-  return require('ALLOWED_ROOT_DIR');
+  return get('ALLOWED_ROOT_DIR', process.cwd());
 }
 
 /**
@@ -140,17 +141,17 @@ export function checkEnvironment() {
   }
 
   // 2. 检查必需的环境变量
-  const requiredVars = ['DINGTALK_APP_KEY', 'DINGTALK_APP_SECRET', 'ALLOWED_ROOT_DIR'];
+  const requiredVars = ['DINGTALK_APP_KEY', 'DINGTALK_APP_SECRET'];
   for (const varName of requiredVars) {
     if (!process.env[varName]) {
       issues.push(`缺少环境变量: ${varName}`);
     }
   }
 
-  // 3. 检查工作目录是否存在
+  // 3. 检查工作目录是否存在（可选配置）
   const allowedRootDir = process.env.ALLOWED_ROOT_DIR;
   if (allowedRootDir && !fs.existsSync(allowedRootDir)) {
-    issues.push(`工作目录不存在: ${allowedRootDir}`);
+    warnings.push(`ALLOWED_ROOT_DIR 目录不存在: ${allowedRootDir}`);
   }
 
   // 4. 检查 node-pty 是否安装（检查模块路径）
@@ -226,7 +227,7 @@ export function validateConfig() {
   try {
     getDingTalkAppKey();
     getDingTalkAppSecret();
-    getAllowedRootDir();
+    // ALLOWED_ROOT_DIR 已废弃，不再强制验证
     return true;
   } catch (error) {
     console.error('配置验证失败:', error.message);

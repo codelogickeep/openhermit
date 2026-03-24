@@ -1,6 +1,10 @@
 /**
  * openhermit init 命令
- * 将 OpenHermit hooks 配置注入到用户全局 ~/.claude/settings.json
+ * 将 OpenHermit hooks 配置注入到项目级别或全局配置
+ *
+ * 用法:
+ *   openhermit init                    # 全局注入 (~/.claude/settings.json)
+ *   openhermit init /path/to/project   # 项目级别注入
  */
 
 import fs from 'fs';
@@ -43,11 +47,20 @@ function deepMerge(target, source) {
 }
 
 /**
- * 获取用户 Claude 配置目录
+ * 获取用户全局 Claude 配置目录
  * @returns {string}
  */
-function getUserClaudeDir() {
+function getGlobalClaudeDir() {
   return path.join(os.homedir(), '.claude');
+}
+
+/**
+ * 获取项目级别 Claude 配置目录
+ * @param {string} projectPath - 项目路径
+ * @returns {string}
+ */
+function getProjectClaudeDir(projectPath) {
+  return path.join(projectPath, '.claude');
 }
 
 /**
@@ -110,28 +123,37 @@ function isHermitHooksInjected(settings, hooksDir) {
 /**
  * 执行 init 命令
  * @param {object} options - 选项
+ * @param {string} options.projectPath - 项目路径（可选，不传则为全局）
  * @param {boolean} options.force - 强制重新注入
  * @param {boolean} options.backup - 是否备份原配置
  */
 export async function initHermit(options = {}) {
-  const { force = false, backup = true } = options;
+  const { projectPath = null, force = false, backup = true } = options;
 
-  const userClaudeDir = getUserClaudeDir();
-  const settingsPath = path.join(userClaudeDir, 'settings.json');
+  // 确定是项目级别还是全局
+  const isProjectLevel = !!projectPath;
+  const targetDir = isProjectLevel
+    ? getProjectClaudeDir(projectPath)
+    : getGlobalClaudeDir();
+  const settingsPath = path.join(targetDir, 'settings.json');
   const hooksDir = getHooksDir();
   const hermitHooks = generateHermitHooksConfig(hooksDir);
 
   console.log('');
   console.log('🦀 OpenHermit Init');
   console.log('==================');
-  console.log(`📁 Claude 配置目录: ${userClaudeDir}`);
-  console.log(`📁 Hooks 脚本目录: ${hooksDir}`);
+  console.log(`📁 配置级别: ${isProjectLevel ? '项目级别' : '全局'}`);
+  console.log(`📁 配置目录: ${targetDir}`);
+  console.log(`📁 Hooks 目录: ${hooksDir}`);
+  if (isProjectLevel) {
+    console.log(`📁 项目路径: ${projectPath}`);
+  }
   console.log('');
 
-  // 确保 .claude 目录存在
-  if (!fs.existsSync(userClaudeDir)) {
-    fs.mkdirSync(userClaudeDir, { recursive: true });
-    console.log('✅ 已创建 .claude 目录');
+  // 确保配置目录存在
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+    console.log(`✅ 已创建配置目录: ${targetDir}`);
   }
 
   // 读取现有配置
@@ -168,7 +190,7 @@ export async function initHermit(options = {}) {
 
   // 写入配置
   fs.writeFileSync(settingsPath, JSON.stringify(mergedSettings, null, 2));
-  console.log('✅ 已写入配置到 settings.json');
+  console.log(`✅ 已写入配置到: ${settingsPath}`);
 
   // 显示注入的 hooks
   console.log('');
@@ -181,25 +203,34 @@ export async function initHermit(options = {}) {
   console.log('✅ Init 完成！');
   console.log('');
   console.log('📖 使用方法:');
-  console.log('   1. 在任意终端启动 Claude Code: claude');
-  console.log('   2. 启动 OpenHermit 监控: openhermit');
-  console.log('   3. 取消注入: openhermit uninit');
+  if (isProjectLevel) {
+    console.log(`   1. 进入项目: cd ${projectPath}`);
+    console.log('   2. 启动 Claude Code: claude');
+    console.log('   3. 在另一个终端启动监控: openhermit');
+  } else {
+    console.log('   1. 在任意终端启动 Claude Code: claude');
+    console.log('   2. 启动 OpenHermit 监控: openhermit');
+  }
+  console.log('   4. 取消注入: openhermit uninit');
   console.log('');
 
-  return { success: true, alreadyInjected: false };
+  return { success: true, alreadyInjected: false, settingsPath };
 }
 
 /**
  * 获取 Init 命令状态
+ * @param {string} projectPath - 项目路径（可选）
  * @returns {object}
  */
-export function getInitStatus() {
-  const userClaudeDir = getUserClaudeDir();
-  const settingsPath = path.join(userClaudeDir, 'settings.json');
+export function getInitStatus(projectPath = null) {
+  const targetDir = projectPath
+    ? getProjectClaudeDir(projectPath)
+    : getGlobalClaudeDir();
+  const settingsPath = path.join(targetDir, 'settings.json');
   const hooksDir = getHooksDir();
 
   if (!fs.existsSync(settingsPath)) {
-    return { initialized: false, reason: 'settings.json 不存在' };
+    return { initialized: false, reason: 'settings.json 不存在', settingsPath };
   }
 
   try {
@@ -209,10 +240,11 @@ export function getInitStatus() {
     return {
       initialized: isHermitHooksInjected(settings, hooksDir),
       settingsPath,
-      hooksDir
+      hooksDir,
+      isProjectLevel: !!projectPath
     };
   } catch (error) {
-    return { initialized: false, reason: error.message };
+    return { initialized: false, reason: error.message, settingsPath };
   }
 }
 

@@ -56,14 +56,17 @@ OpenHermit (开源寄居蟹) v${packageJson.version} - Claude Code 钉钉监控�
 if (args[0] === 'init') {
   const { initHermit } = await import('./commands/init.js');
   const force = args.includes('--force');
-  await initHermit({ force });
+  // 获取项目路径参数
+  const projectPath = args.find(arg => !arg.startsWith('-') && arg !== 'init');
+  await initHermit({ force, projectPath });
   process.exit(0);
 }
 
 // uninit 命令
 if (args[0] === 'uninit') {
   const { uninitHermit } = await import('./commands/uninit.js');
-  await uninitHermit();
+  const projectPath = args.find(arg => !arg.startsWith('-') && arg !== 'uninit');
+  await uninitHermit({ projectPath });
   process.exit(0);
 }
 
@@ -73,7 +76,7 @@ const { getDingTalkAppKey, getDingTalkAppSecret, getDingTalkUserId, getDashScope
 const { default: DingTalkChannel } = await import('./channel/dingtalk.js');
 const { default: logger } = await import('./utils/logger.js');
 const { getLLMClient, getInteractionAnalyzer, getInteractionContext } = await import('./llm/index.js');
-const { getIPCServer, getHookHandler, InteractionState } = await import('./core/index.js');
+const { getIPCServer, getHookHandler, InteractionState, getCommandManager } = await import('./core/index.js');
 
 // 全局异常处理
 process.on('unhandledRejection', (reason, promise) => {
@@ -107,6 +110,7 @@ class OpenHermit {
     // Hook 系统
     this.ipcServer = getIPCServer();
     this.hookHandler = getHookHandler();
+    this.commandManager = getCommandManager();
 
     if (this.smartMode) {
       logger.info('智能交互模式已启用');
@@ -149,16 +153,33 @@ class OpenHermit {
       onStateChange: (newState, oldState) => {
         logger.info({ from: oldState, to: newState }, 'Hook 状态变更');
       },
-      onSendMessage: (msgData) => {
+      onSendMessage: async (msgData) => {
         logger.info({ type: msgData.type }, '📤 Hook 消息发送到钉钉');
-        this.channel.send(msgData.message, { immediate: true });
+        await this.channel.send(msgData.message, { immediate: true });
       }
+    });
+
+    // 设置 CommandManager 回调
+    this.commandManager.onTimeout = (result) => {
+      this.handleCommandTimeout(result);
+    };
+    this.commandManager.onCommandProcessed = (commandInfo) => {
+      logger.info({ commandId: commandInfo.commandId }, '✅ 命令已被 Claude Code 执行');
+    };
+
+    // 监听钉钉消息
+    this.channel.on('text', (text, userId, meta) => {
+      this.handleDingTalkMessage(text, userId, meta);
     });
 
     // 注册 IPC 事件处理
     this.ipcServer.on('pre-tool', (data) => this.hookHandler.handlePreToolUse(data));
     this.ipcServer.on('notification', (data) => this.hookHandler.handleNotification(data));
     this.ipcServer.on('stop', (data) => this.hookHandler.handleStop(data));
+
+    // 注册命令相关 IPC 端点
+    this.ipcServer.on('command-processed', (data) => this.commandManager.handleCommandProcessed(data));
+    this.ipcServer.on('command-timeout', (data) => this.commandManager.handleCommandTimeout(data));
 
     // 启动 IPC Server
     try {
@@ -168,6 +189,79 @@ class OpenHermit {
       logger.error({ error: error.message }, 'IPC Server 启动失败');
       throw error;
     }
+  }
+
+  /**
+   * 处理钉钉消息
+   * @param {string} text - 消息文本
+   * @param {string} userId - 用户 ID
+   * @param {object} meta - 元数据
+   */
+  async handleDingTalkMessage(text, userId, meta) {
+    logger.info({ text: text.substring(0, 50), userId, isVoice: meta.isVoiceMessage }, '📥 收到钉钉消息');
+
+    // 检查是否可以接收命令
+    if (this.commandManager.canAcceptCommand()) {
+      const session = this.commandManager.getActiveSession();
+
+      try {
+        // 写入命令文件
+        const commandInfo = this.commandManager.writeCommand(
+          session.cwd,
+          text,
+          {
+            source: 'dingtalk',
+            userId: userId,
+            isVoiceMessage: meta.isVoiceMessage,
+            sessionId: session.sessionId
+          }
+        );
+
+        logger.info({ commandId: commandInfo.commandId }, '📝 命令已写入，等待 Claude 读取');
+
+        // 发送确认消息
+        const confirmMsg = this.generateCommandReceivedMessage(commandInfo);
+        await this.channel.send(confirmMsg, { immediate: true });
+
+      } catch (error) {
+        logger.error({ error: error.message }, '❌ 写入命令失败');
+        await this.channel.send('❌ 命令写入失败，请直接在终端输入。', { immediate: true });
+      }
+    } else {
+      // Claude 不在 idle 状态
+      const session = this.commandManager.getActiveSession();
+      const stateDesc = session ? `当前状态: ${session.state}` : '没有活跃会话';
+      await this.channel.send(`⚠️ Claude Code 当前不在等待输入状态。\n\n${stateDesc}\n\n请稍后再试或直接在终端输入。`, { immediate: true });
+    }
+  }
+
+  /**
+   * 生成命令已接收消息
+   * @param {object} commandInfo - 命令信息
+   * @returns {string}
+   */
+  generateCommandReceivedMessage(commandInfo) {
+    return `## 📝 已收到指令
+
+**项目**: \`${commandInfo.projectName}\`
+**指令**: ${commandInfo.command.substring(0, 100)}${commandInfo.command.length > 100 ? '...' : ''}
+
+正在传递给 Claude Code...`;
+  }
+
+  /**
+   * 处理命令超时
+   * @param {object} result - 超时结果
+   */
+  async handleCommandTimeout(result) {
+    const timeoutMsg = `## ⏰ 等待超时
+
+**项目**: \`${result.projectName}\`
+**超时**: ${result.timeout / 60} 分钟
+
+请直接在终端输入或稍后重试。`;
+
+    await this.channel.send(timeoutMsg, { immediate: true });
   }
 
   /**
@@ -241,7 +335,8 @@ class OpenHermit {
 - 关闭 OpenHermit 不会影响 Claude Code 运行`;
 
     try {
-      this.channel.sendImmediate(startupMsg);
+      await this.channel.sendImmediate(startupMsg);
+      logger.info('启动通知已发送到钉钉');
     } catch (error) {
       logger.warn({ error: error.message }, '发送启动消息失败');
     }

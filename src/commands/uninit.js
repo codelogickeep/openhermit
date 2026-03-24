@@ -1,6 +1,6 @@
 /**
  * openhermit uninit 命令
- * 从用户全局配置中移除 OpenHermit hooks
+ * 从配置中移除 OpenHermit hooks（支持项目级别和全局）
  */
 
 import fs from 'fs';
@@ -11,11 +11,20 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * 获取用户 Claude 配置目录
+ * 获取用户全局 Claude 配置目录
  * @returns {string}
  */
-function getUserClaudeDir() {
+function getGlobalClaudeDir() {
   return path.join(os.homedir(), '.claude');
+}
+
+/**
+ * 获取项目级别 Claude 配置目录
+ * @param {string} projectPath - 项目路径
+ * @returns {string}
+ */
+function getProjectClaudeDir(projectPath) {
+  return path.join(projectPath, '.claude');
 }
 
 /**
@@ -65,19 +74,28 @@ function filterHermitHooks(hooksArray, hooksDir) {
 /**
  * 执行 uninit 命令
  * @param {object} options - 选项
+ * @param {string} options.projectPath - 项目路径（可选，不传则为全局）
  * @param {boolean} options.backup - 是否备份原配置
  */
 export async function uninitHermit(options = {}) {
-  const { backup = true } = options;
+  const { projectPath = null, backup = true } = options;
 
-  const userClaudeDir = getUserClaudeDir();
-  const settingsPath = path.join(userClaudeDir, 'settings.json');
+  // 确定是项目级别还是全局
+  const isProjectLevel = !!projectPath;
+  const targetDir = isProjectLevel
+    ? getProjectClaudeDir(projectPath)
+    : getGlobalClaudeDir();
+  const settingsPath = path.join(targetDir, 'settings.json');
   const hooksDir = getHooksDir();
 
   console.log('');
   console.log('🦀 OpenHermit Uninit');
   console.log('====================');
-  console.log(`📁 Claude 配置目录: ${userClaudeDir}`);
+  console.log(`📁 配置级别: ${isProjectLevel ? '项目级别' : '全局'}`);
+  console.log(`📁 配置目录: ${targetDir}`);
+  if (isProjectLevel) {
+    console.log(`📁 项目路径: ${projectPath}`);
+  }
   console.log('');
 
   // 检查配置文件是否存在
@@ -148,11 +166,14 @@ export async function uninitHermit(options = {}) {
 
 /**
  * 获取 OpenHermit hooks 注入状态
+ * @param {string} projectPath - 项目路径（可选）
  * @returns {object}
  */
-export function getUninitStatus() {
-  const userClaudeDir = getUserClaudeDir();
-  const settingsPath = path.join(userClaudeDir, 'settings.json');
+export function getUninitStatus(projectPath = null) {
+  const targetDir = projectPath
+    ? getProjectClaudeDir(projectPath)
+    : getGlobalClaudeDir();
+  const settingsPath = path.join(targetDir, 'settings.json');
   const hooksDir = getHooksDir();
 
   if (!fs.existsSync(settingsPath)) {
@@ -188,7 +209,8 @@ export function getUninitStatus() {
     return {
       hasHermitHooks: hermitHookCount > 0,
       hermitHookCount,
-      settingsPath
+      settingsPath,
+      isProjectLevel: !!projectPath
     };
   } catch (error) {
     return { hasHermitHooks: false, error: error.message };
