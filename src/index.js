@@ -25,10 +25,18 @@ if (args.includes('-h') || args.includes('--help')) {
 OpenHermit (开源寄居蟹) v${packageJson.version}
 
 用法:
-  openhermit           启动服务
-  openhermit -v        显示版本号
-  openhermit update    更新到最新版本
-  openhermit -h        显示帮助信息
+  openhermit                    启动完整服务（PTY + 钉钉）
+  openhermit monitor            启动监控模式（仅钉钉通知，无 PTY）
+  openhermit init               初始化 hooks 配置（注入到 ~/.claude/）
+  openhermit uninit             移除 hooks 配置
+  openhermit -v                 显示版本号
+  openhermit update             更新到最新版本
+  openhermit -h                 显示帮助信息
+
+监控模式使用流程:
+  1. openhermit init            # 一次性初始化 hooks
+  2. claude                     # 正常启动 Claude Code
+  3. openhermit monitor         # 启动监控，接收钉钉通知
 
 详细使用文档:
 https://github.com/codelogickeep/openhermit/blob/main/README.md
@@ -48,6 +56,24 @@ if (args[0] === 'update') {
   }
   process.exit(0);
 }
+
+// init 命令
+if (args[0] === 'init') {
+  const { initHermit } = await import('./commands/init.js');
+  const force = args.includes('--force');
+  await initHermit({ force });
+  process.exit(0);
+}
+
+// uninit 命令
+if (args[0] === 'uninit') {
+  const { uninitHermit } = await import('./commands/uninit.js');
+  await uninitHermit();
+  process.exit(0);
+}
+
+// 确定运行模式
+const mode = args[0] === 'monitor' ? 'monitor' : 'full';
 
 // 以下是正常启动逻辑（使用动态 import）
 const { validateConfig, getAllowedRootDir, printEnvironmentInfo, getDashScopeApiKey } = await import('./config/index.js');
@@ -87,67 +113,77 @@ process.on('uncaughtException', (error) => {
  * OpenHermit 主应用
  */
 class OpenHermit {
-  constructor() {
-    // 核心组件
-    this.pty = new PTYEngine();
+  constructor(mode = 'full') {
+    this.mode = mode; // 'full' | 'monitor'
+
+    // 核心组件（两种模式都需要）
     this.channel = new DingTalkChannel();
-    this.intentParser = getIntentParser();
-    this.formatter = getMarkdownFormatter();
     this.llmClient = getLLMClient();
     this.interactionAnalyzer = getInteractionAnalyzer();
     this.interactionContext = getInteractionContext();
     this.smartMode = !!getDashScopeApiKey(); // 智能模式：是否启用了 LLM
 
-    // 子模块实例
-    this.terminalLogger = new TerminalLogger();
-    this.taskManager = new TaskManager();
-    this.systemCommands = new SystemCommands();
-    this.hitlController = new HitlController();
-    this.messageHandler = new MessageHandler();
-
-    // Hook 系统
+    // Hook 系统（两种模式都需要）
     this.ipcServer = getIPCServer();
     this.hookHandler = getHookHandler();
 
-    // HITL 状态
-    this.hitlActive = false;
-    this.pausedBuffer = '';
+    // 任务管理（简化版，用于 monitor 模式）
+    this.taskManager = new TaskManager();
 
-    // 安全确认状态
-    this.securityPendingCommand = null;
-    this.securityPendingCallback = null;
+    // 完整模式特有的组件
+    if (mode === 'full') {
+      this.pty = new PTYEngine();
+      this.intentParser = getIntentParser();
+      this.formatter = getMarkdownFormatter();
 
-    // 终端输出缓冲区（用于 LLM 上下文分析）
-    this.terminalBuffer = '';
-    this.maxBufferSize = 5000; // 最大缓冲区大小
-    this.lastInteractionBufferEnd = 0; // 上次交互结束时的缓冲区位置
+      // 子模块实例
+      this.terminalLogger = new TerminalLogger();
+      this.systemCommands = new SystemCommands();
+      this.hitlController = new HitlController();
+      this.messageHandler = new MessageHandler();
 
-    // PTY 输出处理队列
-    this.ptyQueue = [];
-    this.isProcessingPty = false;
+      // HITL 状态
+      this.hitlActive = false;
+      this.pausedBuffer = '';
 
-    // 输出缓冲（静默模式）
-    this.outputBuffer = {
-      silent: true,  // 静默模式（不实时发送）
-      pending: '',
-      maxSize: 10000  // 最大缓冲区大小
-    };
+      // 安全确认状态
+      this.securityPendingCommand = null;
+      this.securityPendingCallback = null;
 
-    // 选项检测相关
-    this.lastSentOptionsKey = null;  // 上次发送的选项的 JSON key（避免重复发送）
+      // 终端输出缓冲区（用于 LLM 上下文分析）
+      this.terminalBuffer = '';
+      this.maxBufferSize = 5000; // 最大缓冲区大小
+      this.lastInteractionBufferEnd = 0; // 上次交互结束时的缓冲区位置
 
-    // LLM 分析状态追踪
-    this.lastAnalyzedPosition = 0;  // 上次分析时的缓冲区位置
-    this.waitingForUserReply = false;  // 是否正在等待用户回复
+      // PTY 输出处理队列
+      this.ptyQueue = [];
+      this.isProcessingPty = false;
 
-    // 延迟检测机制
-    this.interactionCheckTimer = null;  // 交互检测定时器
-    this.interactionCheckDelay = 2000;  // 延迟检测时间（毫秒）
-    this.lastOutputTime = 0;  // 最后一次输出时间
+      // 输出缓冲（静默模式）
+      this.outputBuffer = {
+        silent: true,  // 静默模式（不实时发送）
+        pending: '',
+        maxSize: 10000  // 最大缓冲区大小
+      };
+
+      // 选项检测相关
+      this.lastSentOptionsKey = null;  // 上次发送的选项的 JSON key（避免重复发送）
+
+      // LLM 分析状态追踪
+      this.lastAnalyzedPosition = 0;  // 上次分析时的缓冲区位置
+      this.waitingForUserReply = false;  // 是否正在等待用户回复
+
+      // 延迟检测机制
+      this.interactionCheckTimer = null;  // 交互检测定时器
+      this.interactionCheckDelay = 2000;  // 延迟检测时间（毫秒）
+      this.lastOutputTime = 0;  // 最后一次输出时间
+    }
 
     if (this.smartMode) {
       logger.info('智能交互模式已启用');
     }
+
+    logger.info({ mode }, `🦀 OpenHermit 模式: ${mode}`);
   }
 
   /**
@@ -155,7 +191,21 @@ class OpenHermit {
    * @returns {object}
    */
   getContext() {
+    // 监控模式的简化上下文
+    if (this.mode === 'monitor') {
+      return {
+        mode: 'monitor',
+        channel: this.channel,
+        hookHandler: this.hookHandler,
+        taskManager: this.taskManager,
+        smartMode: this.smartMode,
+        taskStatus: this.taskManager.status,
+      };
+    }
+
+    // 完整模式的完整上下文
     return {
+      mode: 'full',
       // 核心组件
       pty: this.pty,
       channel: this.channel,
@@ -312,14 +362,20 @@ class OpenHermit {
       process.exit(1);
     }
 
-    // 验证配置
-    if (!validateConfig()) {
+    // 验证配置（监控模式下 ALLOWED_ROOT_DIR 不是必需的）
+    if (this.mode === 'full' && !validateConfig()) {
       logger.error('配置验证失败，请检查 .env 文件');
       process.exit(1);
     }
 
-    // 初始化终端日志文件
-    this.terminalLogger.init();
+    // 监控模式下只验证钉钉配置
+    if (this.mode === 'monitor') {
+      const { getDingTalkAppKey, getDingTalkAppSecret } = await import('./config/index.js');
+      if (!getDingTalkAppKey() || !getDingTalkAppSecret()) {
+        logger.error('监控模式需要配置钉钉 DINGTALK_APP_KEY 和 DINGTALK_APP_SECRET');
+        process.exit(1);
+      }
+    }
 
     // 初始化并测试 LLM 连接（如果配置了 DashScope API Key）
     if (this.smartMode) {
@@ -328,29 +384,37 @@ class OpenHermit {
       logger.warn('未配置 DashScope API Key，LLM 分析功能不可用');
     }
 
-    // 设置 PTY 数据监听
-    this.pty.onData((data) => {
-      this.handlePtyData(data);
-    });
+    // 完整模式特有的初始化
+    if (this.mode === 'full') {
+      // 初始化终端日志文件
+      this.terminalLogger.init();
 
-    // 设置 PTY 退出监听
-    this.pty.onExit(({ exitCode, signal }) => {
-      logger.warn({ exitCode, signal }, 'PTY 进程退出');
-      // 不主动推送退出通知，用户可通过 -status 查看
-    });
+      // 设置 PTY 数据监听
+      this.pty.onData((data) => {
+        this.handlePtyData(data);
+      });
 
-    // 设置通道消息监听
-    this.channel.on('text', (text, senderId, metadata) => this.handleChannelText(text, senderId, metadata));
+      // 设置 PTY 退出监听
+      this.pty.onExit(({ exitCode, signal }) => {
+        logger.warn({ exitCode, signal }, 'PTY 进程退出');
+        // 不主动推送退出通知，用户可通过 -status 查看
+      });
 
-    // 设置审批回调监听
-    this.channel.on('approve', () => this.handleApprove());
-    this.channel.on('reject', () => this.handleReject());
+      // 设置通道消息监听
+      this.channel.on('text', (text, senderId, metadata) => this.handleChannelText(text, senderId, metadata));
+
+      // 设置审批回调监听
+      this.channel.on('approve', () => this.handleApprove());
+      this.channel.on('reject', () => this.handleReject());
+    }
 
     // 初始化 Hook 系统
     await this.initHookSystem();
 
-    // 启动 PTY
-    this.pty.start();
+    // 完整模式启动 PTY
+    if (this.mode === 'full') {
+      this.pty.start();
+    }
 
     // 连接钉钉
     try {
@@ -360,7 +424,45 @@ class OpenHermit {
       process.exit(1);
     }
 
-    logger.info('OpenHermit 启动完成');
+    // 发送启动通知
+    if (this.mode === 'monitor') {
+      this.sendMonitorStartupMessage();
+    }
+
+    logger.info(`OpenHermit 启动完成 (mode: ${this.mode})`);
+  }
+
+  /**
+   * 发送监控模式启动消息
+   */
+  async sendMonitorStartupMessage() {
+    const { getDingTalkUserId } = await import('./config/index.js');
+    const userId = getDingTalkUserId();
+
+    if (!userId) {
+      logger.warn('未配置 DINGTALK_USER_ID，无法发送启动通知');
+      return;
+    }
+
+    const startupMsg = `## 🦀 OpenHermit 监控模式已启动
+
+**模式**: 监控模式（无 PTY）
+
+### 📋 功能说明
+- 接收 Claude Code 的 Hook 事件通知
+- 支持任务完成、等待输入等状态通知
+- Claude Code 在独立终端中运行
+
+### 💡 使用说明
+- 在任意终端运行 \`claude\` 启动 Claude Code
+- OpenHermit 会自动接收 Hook 事件并推送到钉钉
+- 关闭 OpenHermit 不会影响 Claude Code 运行`;
+
+    try {
+      this.channel.sendImmediate(startupMsg);
+    } catch (error) {
+      logger.warn({ error: error.message }, '发送启动消息失败');
+    }
   }
 
   /**
@@ -680,15 +782,20 @@ class OpenHermit {
    * 停止应用
    */
   stop() {
-    logger.info('停止 OpenHermit...');
-    this.terminalLogger.close();
-    this.pty.kill();
+    logger.info(`停止 OpenHermit (mode: ${this.mode})...`);
+
+    if (this.mode === 'full') {
+      this.terminalLogger.close();
+      this.pty.kill();
+    }
+
     this.channel.disconnect();
+    this.ipcServer.stop();
   }
 }
 
 // 启动应用
-const app = new OpenHermit();
+const app = new OpenHermit(mode);
 
 app.init().catch(error => {
   logger.error({ error: error.message }, '启动失败');

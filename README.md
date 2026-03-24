@@ -84,11 +84,53 @@ DASHSCOPE_MODEL=qwen-plus                   # 模型（可选）
 
 **获取百炼 API Key**：访问 [阿里云百炼平台](https://bailian.console.aliyun.com/)
 
-### 启动
+## 🚀 运行模式
+
+OpenHermit 支持两种运行模式：
+
+### 模式一：完整模式（默认）
+
+OpenHermit 管理 PTY 终端，适合需要完全控制 Claude Code 的场景。
 
 ```bash
+# 启动完整模式
 openhermit
 ```
+
+### 模式二：监控模式（推荐）
+
+独立运行 Claude Code，OpenHermit 只负责接收 Hook 事件并推送到钉钉。
+
+```bash
+# 1. 一次性初始化（注入 hooks 到 ~/.claude/settings.json）
+openhermit init
+
+# 2. 在任意终端正常启动 Claude Code
+cd ~/projects/my-app
+claude
+
+# 3. 下班时启动监控（在另一个终端）
+openhermit monitor
+```
+
+**监控模式优势**：
+- 不干扰正常工作流程
+- 随时可以开关监控
+- 支持多个 Claude Code 会话
+- OpenHermit 崩溃不影响 Claude Code
+
+### CLI 命令
+
+| 命令 | 说明 |
+|------|------|
+| `openhermit` | 启动完整模式服务 |
+| `openhermit monitor` | 启动监控模式（仅钉钉通知） |
+| `openhermit init` | 初始化 hooks 配置 |
+| `openhermit uninit` | 移除 hooks 配置 |
+| `openhermit -v` | 显示版本号 |
+| `openhermit -h` | 显示帮助 |
+
+### 启动成功
 
 启动成功后显示：
 
@@ -174,8 +216,19 @@ npm rebuild node-pty
 ```
 openhermit/
 ├── src/
-│   ├── index.js          # 入口
+│   ├── index.js          # 入口（支持多模式）
+│   ├── commands/         # CLI 命令模块
+│   │   ├── init.js       # init 命令
+│   │   └── uninit.js     # uninit 命令
 │   ├── config/           # 配置
+│   ├── core/             # 核心模块
+│   │   ├── ipc-server.js # IPC 服务
+│   │   ├── hook-handler.js # Hook 处理器
+│   │   └── ...
+│   ├── hooks/            # Claude Code Hook 脚本
+│   │   ├── pre-tool.sh   # PreToolUse Hook
+│   │   ├── notification.sh # Notification Hook
+│   │   └── stop.sh       # Stop Hook
 │   ├── pty/              # PTY 引擎
 │   ├── channel/          # 钉钉通道
 │   ├── purifier/         # 流净化器
@@ -184,7 +237,7 @@ openhermit/
 │   ├── formatter/        # 输出格式化
 │   ├── selector/         # 选择检测
 │   └── utils/            # 工具
-└── tests/                # 测试（157 用例）
+└── tests/                # 测试（276 用例）
 ```
 
 ## 📄 许可证
