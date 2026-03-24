@@ -181,8 +181,8 @@ export async function initHermit(options = {}) {
   console.log('✅ Init 完成！');
   console.log('');
   console.log('📖 使用方法:');
-  console.log('   1. 正常启动 Claude Code: claude');
-  console.log('   2. 启动 OpenHermit 监控: openhermit monitor');
+  console.log('   1. 在任意终端启动 Claude Code: claude');
+  console.log('   2. 启动 OpenHermit 监控: openhermit');
   console.log('   3. 取消注入: openhermit uninit');
   console.log('');
 

@@ -1,7 +1,7 @@
 {
   "name": "@codelogickeep/open-hermit",
-  "version": "1.3.102",
-  "description": "OpenHermit (开源寄居蟹) - A Lightweight Remote PTY Bridge for Claude Code & Local AI Agents. OpenHermit 不生产指令，只是跨越屏幕的指令搬运工。隐于后台，行于指尖，把最强的大脑搬进你的口袋，让你随时随地无感接管 AI Coding 工作站。",
+  "version": "1.4.0",
+  "description": "OpenHermit (开源寄居蟹) - Claude Code 钉钉监控服务。接收 Claude Code Hook 事件，推送到钉钉。",
   "main": "src/index.js",
   "bin": {
     "openhermit": "./src/index.js"
@@ -21,22 +21,16 @@
     "dev": "node --watch src/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "postinstall": "npm rebuild node-pty --build-from-source",
     "prepublishOnly": "npm test"
   },
   "keywords": [
-    "pty",
     "claude",
     "claude-code",
     "ai-agent",
-    "cli-bridge",
     "dingtalk",
-    "remote-terminal",
-    "mobile-ide",
-    "terminal",
-    "ssh-alternative",
-    "developer-tools",
-    "remote-development",
+    "hooks",
+    "monitoring",
+    "notifications",
     "openhermit"
   ],
   "author": "CodeLogicKeep",
@@ -52,19 +46,13 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "os": [
-    "darwin",
-    "linux"
-  ],
   "dependencies": {
     "axios": "^1.6.0",
     "dingtalk-stream-sdk-nodejs": "^2.0.4",
     "dotenv": "^16.3.1",
     "lodash.debounce": "^4.0.8",
-    "node-pty": "^1.1.0",
     "pino": "^8.17.2",
-    "pino-pretty": "^10.3.1",
-    "strip-ansi": "^6.0.1"
+    "pino-pretty": "^10.3.1"
   },
   "devDependencies": {
     "vitest": "^1.2.0"

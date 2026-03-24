@@ -1,13 +1,8 @@
 /**
  * Core 模块入口
- * 导出所有核心功能模块
+ * 导出所有核心功能模块（监控模式）
  */
 
-export { TerminalLogger, getTerminalLogger } from './terminal-logger.js';
-export { TaskManager, getTaskManager, TaskPhase } from './task-manager.js';
-export { SystemCommands, getSystemCommands } from './system-commands.js';
-export { HitlController, getHitlController } from './hitl-controller.js';
-export { MessageHandler, getMessageHandler } from './message-handler.js';
 export { IPCServer, getIPCServer, resetIPCServer } from './ipc-server.js';
 export { HookContext, getHookContext, resetHookContext } from './hook-context.js';
 export { HookHandler, getHookHandler, resetHookHandler, InteractionState } from './hook-handler.js';

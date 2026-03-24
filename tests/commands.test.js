@@ -207,57 +207,25 @@ describe('Commands 模块', () => {
       expect(writtenContent.hooks.PreToolUse[0].hooks[0].command).toBe('/user/custom/hook.sh');
     });
   });
-
-  describe('deepMerge 函数', () => {
-    it('应该正确合并嵌套对象', async () => {
-      const { deepMerge } = await import('../src/commands/init.js').then(m => {
-        // 提取 deepMerge 函数进行测试
-        const module = m.default;
-        return { deepMerge: module.deepMerge || ((a, b) => ({ ...a, ...b })) };
-      }).catch(() => {
-        // 如果无法直接导入，使用简化测试
-        return { deepMerge: (target, source) => ({ ...target, ...source }) };
-      });
-
-      const target = { a: 1, b: { c: 2 } };
-      const source = { b: { d: 3 }, e: 4 };
-      const result = deepMerge(target, source);
-
-      // 验证合并结果
-      expect(result).toBeDefined();
-    });
-  });
 });
 
 describe('Hook 脚本默认端口测试', () => {
   // 使用真实的文件系统，不受 mock 影响
-  let realFs;
-
-  beforeEach(() => {
-    // 保存真实的 fs
-    realFs = { ...fs };
-  });
-
   it('pre-tool.sh 应该支持默认端口', () => {
     const hookPath = path.join(process.cwd(), 'src/hooks/pre-tool.sh');
-    // 使用 require 的原生 fs
     const content = require('fs').readFileSync(hookPath, 'utf-8');
-
-    // 检查脚本使用了默认端口语法
     expect(content).toContain('${HERMIT_IPC_PORT:-31337}');
   });
 
   it('notification.sh 应该支持默认端口', () => {
     const hookPath = path.join(process.cwd(), 'src/hooks/notification.sh');
     const content = require('fs').readFileSync(hookPath, 'utf-8');
-
     expect(content).toContain('${HERMIT_IPC_PORT:-31337}');
   });
 
   it('stop.sh 应该支持默认端口', () => {
     const hookPath = path.join(process.cwd(), 'src/hooks/stop.sh');
     const content = require('fs').readFileSync(hookPath, 'utf-8');
-
     expect(content).toContain('${HERMIT_IPC_PORT:-31337}');
   });
 });
