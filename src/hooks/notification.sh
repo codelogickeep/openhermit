@@ -24,7 +24,8 @@ curl -s -X POST "http://127.0.0.1:${IPC_PORT}/hook/notification" \
 
 # 如果是 idle_prompt 状态，进入命令等待模式
 if [ "$NOTIFICATION_TYPE" = "idle_prompt" ] && [ -n "$CWD" ]; then
-  COMMAND_DIR="$CWD/.claude/.openhermit/commands"
+  # 命令目录：项目目录下的 .claude/commands/
+  COMMAND_DIR="$CWD/.claude/commands"
   TIMEOUT=600  # 10 分钟
   ELAPSED=0
   CHECK_INTERVAL=1
