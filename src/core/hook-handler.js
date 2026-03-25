@@ -324,12 +324,22 @@ Claude Code 正在等待您的指令，请在钉钉发送消息。`;
       timestamp: Date.now()
     };
 
-    // 切换状态
+    // 切换状态为 completed
     this.setState(InteractionState.COMPLETED);
 
-    // 清除上下文和会话
+    // 更新会话状态为 completed，但不清除会话
+    // 这样用户在收到"任务完成"通知后可以立即发送下一条命令
+    const currentSession = this.commandManager.getActiveSession();
+    if (currentSession && currentSession.sessionId === data.session_id) {
+      this.commandManager.setActiveSession({
+        ...currentSession,
+        state: 'completed',
+        timestamp: Date.now()
+      });
+    }
+
+    // 清除 Hook 上下文（保留会话信息）
     this.hookContext.clear();
-    this.commandManager.clearActiveSession();
 
     // 发送完成通知
     if (this.onSendMessage) {

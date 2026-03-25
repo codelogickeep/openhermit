@@ -1,0 +1,35 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/zhengyd/.nvm/versions/node/v24.12.0/lib/node_modules/@codelogickeep/open-hermit/src/hooks/pre-tool.sh"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/zhengyd/.nvm/versions/node/v24.12.0/lib/node_modules/@codelogickeep/open-hermit/src/hooks/notification.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/zhengyd/.nvm/versions/node/v24.12.0/lib/node_modules/@codelogickeep/open-hermit/src/hooks/stop.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

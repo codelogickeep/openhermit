@@ -208,10 +208,12 @@ class CommandManager {
 
   /**
    * 检查是否可以接收命令
+   * 会话状态为 idle 或 completed 时都可以接收命令
    * @returns {boolean}
    */
   canAcceptCommand() {
-    return this.activeSession && this.activeSession.state === 'idle';
+    return this.activeSession &&
+      (this.activeSession.state === 'idle' || this.activeSession.state === 'completed');
   }
 
   /**
