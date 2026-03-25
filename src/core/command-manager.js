@@ -69,17 +69,20 @@ class CommandManager {
     const commandId = `${timestamp}`;
     const commandFile = path.join(commandDir, `${commandId}.txt`);
 
+    // 去除首尾空白
+    const trimmedCommand = command.trim();
+
     try {
       // 确保目录存在
       fs.mkdirSync(commandDir, { recursive: true });
 
       // 写入命令文件
-      fs.writeFileSync(commandFile, command.trim());
+      fs.writeFileSync(commandFile, trimmedCommand);
 
       const commandInfo = {
         commandId,
         commandFile,
-        command,
+        command: trimmedCommand,
         projectDir,
         projectName: path.basename(projectDir),
         createdAt: new Date().toISOString(),
@@ -89,7 +92,7 @@ class CommandManager {
       // 记录待处理命令
       this.pendingCommands.set(commandId, commandInfo);
 
-      logger.info({ commandId, commandFile, command }, '📝 命令文件已写入');
+      logger.info({ commandId, commandFile, command: trimmedCommand }, '📝 命令文件已写入');
 
       return commandInfo;
     } catch (error) {

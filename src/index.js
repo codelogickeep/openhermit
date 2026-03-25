@@ -36,16 +36,23 @@ if (args.includes('-h') || args.includes('--help')) {
 OpenHermit (开源寄居蟹) v${packageJson.version} - Claude Code 钉钉监控服务
 
 用法:
-  openhermit              启动监控服务
-  openhermit init         初始化 hooks 配置（注入到 ~/.claude/）
-  openhermit uninit       移除 hooks 配置
-  openhermit -v           显示版本号
-  openhermit -h           显示帮助信息
+  openhermit                     启动监控服务
+  openhermit init [项目路径]     初始化 hooks 配置
+                                 - 无参数: 注入到 ~/.claude/（全局）
+                                 - 带路径: 为指定项目初始化
+  openhermit uninit              移除 hooks 配置
+  openhermit -v, --version       显示版本号
+  openhermit -h, --help          显示帮助信息
+
+示例:
+  openhermit init                    # 全局初始化（推荐）
+  openhermit init ~/projects/myapp  # 为特定项目初始化
+  openhermit                         # 启动监控服务
 
 使用流程:
-  1. openhermit init      # 一次性初始化 hooks
-  2. claude               # 在任意终端启动 Claude Code
-  3. openhermit           # 启动监控，接收钉钉通知
+  1. openhermit init         # 一次性初始化 hooks
+  2. claude                  # 在任意终端启动 Claude Code
+  3. openhermit              # 启动监控，接收钉钉通知
 
 详细文档: https://github.com/codelogickeep/openhermit
 `);

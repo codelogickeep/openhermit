@@ -163,10 +163,15 @@ openhermit
 | 命令 | 说明 |
 |------|------|
 | `openhermit` | 启动监控服务（接收 Hook 事件并推送钉钉） |
-| `openhermit init [--force]` | 初始化 hooks 配置（注入到 `~/.claude/`） |
+| `openhermit init [项目路径]` | 初始化 hooks 配置（无参数为全局初始化） |
+| `openhermit init --force` | 强制重新初始化（覆盖现有配置） |
 | `openhermit uninit` | 移除 hooks 配置 |
 | `openhermit -v, --version` | 显示版本号 |
 | `openhermit -h, --help` | 显示帮助信息 |
+
+**init 命令说明：**
+- `openhermit init` - 全局初始化，注入 hooks 到 `~/.claude/settings.json`（推荐）
+- `openhermit init ~/projects/myapp` - 为指定项目初始化
 
 **监控模式优势**：
 - 不干扰正常工作流程

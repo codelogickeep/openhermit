@@ -177,17 +177,29 @@ class IPCServer {
       return;
     }
 
-    // 解析路由
+    // 解析路由 - 支持 /hook/ 和 /command/ 前缀
     const url = req.url;
     const hookMatch = url.match(/^\/hook\/(.+)$/);
+    const commandMatch = url.match(/^\/command\/(.+)$/);
 
-    if (!hookMatch) {
+    if (!hookMatch && !commandMatch) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not Found');
       return;
     }
 
-    const hookType = hookMatch[1];
+    // 对于 /command/ 前缀，事件类型添加 'command-' 前缀
+    // 例如：/command/processed -> 'command-processed'
+    let eventType;
+    let routePrefix;
+
+    if (hookMatch) {
+      eventType = hookMatch[1];
+      routePrefix = 'hook';
+    } else {
+      eventType = `command-${commandMatch[1]}`;
+      routePrefix = 'command';
+    }
 
     // 读取请求体
     let body = '';
@@ -205,29 +217,30 @@ class IPCServer {
 
         // 记录接收到的 Hook 事件（完整数据）
         logger.info({
-          hookType,
+          routePrefix,
+          eventType,
           toolName: data.tool_name,
           sessionId: data.session_id,
           dataSize: body.length,
           rawData: data
-        }, '📥 收到 Hook 事件');
+        }, '📥 收到 IPC 事件');
 
         // 调用对应的事件处理器
-        const handler = this.eventHandlers.get(hookType);
+        const handler = this.eventHandlers.get(eventType);
         if (handler) {
           try {
             // 支持 async 处理器
             const result = handler(data);
             if (result && typeof result.catch === 'function') {
               result.catch(error => {
-                logger.error({ hookType, error: error.message }, 'Hook 处理器执行失败');
+                logger.error({ eventType, error: error.message }, 'IPC 事件处理器执行失败');
               });
             }
           } catch (error) {
-            logger.error({ hookType, error: error.message }, 'Hook 处理器执行失败');
+            logger.error({ eventType, error: error.message }, 'IPC 事件处理器执行失败');
           }
         } else {
-          logger.debug({ hookType }, '没有注册的 Hook 类型');
+          logger.debug({ eventType }, '没有注册的事件处理器');
         }
 
         // 立即返回 200 OK（避免阻塞 Claude Code）
@@ -235,7 +248,7 @@ class IPCServer {
         res.end('OK');
 
       } catch (error) {
-        logger.error({ hookType, error: error.message }, 'Hook 事件解析失败');
+        logger.error({ eventType, error: error.message }, 'IPC 事件解析失败');
         // 仍然返回 200，避免影响 Claude Code
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('OK');
