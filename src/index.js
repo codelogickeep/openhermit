@@ -253,7 +253,7 @@ class OpenHermit {
 **项目**: \`${commandInfo.projectName}\`
 **指令**: ${commandInfo.command.substring(0, 100)}${commandInfo.command.length > 100 ? '...' : ''}
 
-正在传递给 Claude Code...`;
+命令已写入，将在 Claude Code 任务完成时执行。`;
   }
 
   /**

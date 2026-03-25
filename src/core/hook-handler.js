@@ -278,7 +278,9 @@ class HookHandler {
 
 **项目**: \`${projectName}\`
 
-Claude Code 正在等待您的指令，请在钉钉发送消息。`;
+Claude Code 任务完成，正在等待您的指令。
+
+发送消息后，命令将在 Claude Code 下次停止时执行。`;
   }
 
   /**
