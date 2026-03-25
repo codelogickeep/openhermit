@@ -23,8 +23,8 @@ curl -s -X POST "http://127.0.0.1:${IPC_PORT}/hook/stop" \
 
 # 如果有工作目录，检查是否有待执行的命令
 if [ -n "$CWD" ]; then
-  # 命令目录：项目目录下的 .claude/commands/
-  COMMAND_DIR="$CWD/.claude/commands"
+  # 命令目录：项目目录下的 .claude/.openhermit/commands/
+  COMMAND_DIR="$CWD/.claude/.openhermit/commands"
   TIMEOUT=30  # 最多等待 30 秒
   ELAPSED=0
   CHECK_INTERVAL=1

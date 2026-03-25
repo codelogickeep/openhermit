@@ -64,9 +64,9 @@ class CommandManager {
    * @returns {object} 命令信息
    */
   writeCommand(projectDir, command, meta = {}) {
-    // 命令文件写入项目目录下的 .claude/commands/
-    // notification.sh 会轮询这个目录
-    const commandDir = path.join(projectDir, '.claude', 'commands');
+    // 命令文件写入项目目录下的 .claude/.openhermit/commands/
+    // stop.sh 会轮询这个目录
+    const commandDir = path.join(projectDir, '.claude', '.openhermit', 'commands');
     const timestamp = Date.now();
     const commandId = `${timestamp}`;
     const commandFile = path.join(commandDir, `${commandId}.txt`);
