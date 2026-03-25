@@ -327,16 +327,18 @@ Claude Code 正在等待您的指令，请在钉钉发送消息。`;
     // 切换状态为 completed
     this.setState(InteractionState.COMPLETED);
 
-    // 更新会话状态为 completed，但不清除会话
+    // 更新或创建会话，状态设为 completed
     // 这样用户在收到"任务完成"通知后可以立即发送下一条命令
     const currentSession = this.commandManager.getActiveSession();
-    if (currentSession && currentSession.sessionId === data.session_id) {
-      this.commandManager.setActiveSession({
-        ...currentSession,
-        state: 'completed',
-        timestamp: Date.now()
-      });
-    }
+    this.commandManager.setActiveSession({
+      sessionId: data.session_id,
+      cwd: data.cwd,
+      projectName: event.projectName,
+      state: 'completed',
+      timestamp: Date.now(),
+      // 保留之前的一些信息（如果有）
+      ...(currentSession?.sessionId === data.session_id ? currentSession : {})
+    });
 
     // 清除 Hook 上下文（保留会话信息）
     this.hookContext.clear();
