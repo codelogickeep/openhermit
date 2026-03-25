@@ -30,6 +30,10 @@ if [ "$NOTIFICATION_TYPE" = "idle_prompt" ] && [ -n "$CWD" ]; then
   ELAPSED=0
   CHECK_INTERVAL=1
 
+  # 调试日志
+  DEBUG_LOG="$CWD/.claude/notification-debug.log"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 开始轮询命令目录: $COMMAND_DIR" >> "$DEBUG_LOG"
+
   # 等待 IPC 通知完成
   wait
 
@@ -42,6 +46,9 @@ if [ "$NOTIFICATION_TYPE" = "idle_prompt" ] && [ -n "$CWD" ]; then
       if [ -f "$COMMAND_FILE" ]; then
         # 读取命令内容
         COMMAND=$(cat "$COMMAND_FILE")
+
+        # 调试日志
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] 读取到命令: $COMMAND" >> "$DEBUG_LOG"
 
         # 输出命令到 stdout（Claude Code 会读取作为用户输入）
         echo "$COMMAND"
@@ -64,6 +71,9 @@ if [ "$NOTIFICATION_TYPE" = "idle_prompt" ] && [ -n "$CWD" ]; then
     sleep $CHECK_INTERVAL
     ELAPSED=$((ELAPSED + CHECK_INTERVAL))
   done
+
+  # 调试日志：超时
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 轮询超时，未找到命令" >> "$DEBUG_LOG"
 
   # 超时：通知 OpenHermit
   curl -s -X POST "http://127.0.0.1:${IPC_PORT}/command/timeout" \
