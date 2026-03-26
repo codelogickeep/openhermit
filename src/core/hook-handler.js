@@ -4,11 +4,22 @@
  */
 
 import path from 'path';
+import fs from 'fs';
 import logger from '../utils/logger.js';
 import { getHookContext } from './hook-context.js';
 import { getLLMClient } from '../llm/client.js';
 import { HookEventPrompts } from '../llm/prompts/hook-event.js';
 import { getCommandManager } from './command-manager.js';
+
+/**
+ * 权限确认状态
+ */
+const PermissionState = {
+  PENDING: 'pending',
+  ALLOWED: 'allowed',
+  DENIED: 'denied',
+  TIMEOUT: 'timeout'
+};
 
 /**
  * 交互状态枚举
@@ -37,6 +48,9 @@ class HookHandler {
     // 回调函数
     this.onStateChange = null;
     this.onSendMessage = null;
+
+    // 待处理的权限确认 (permissionId -> permissionInfo)
+    this.pendingPermissions = new Map();
   }
 
   /**
@@ -72,6 +86,7 @@ class HookHandler {
   /**
    * 处理 PreToolUse 事件
    * @param {object} data - 事件数据
+   * @returns {object|null} 返回 { permissionId, needsConfirm } 或 null
    */
   async handlePreToolUse(data) {
     logger.info({ toolName: data.tool_name, permissionMode: data.permission_mode }, '收到 PreToolUse 事件');
@@ -79,7 +94,7 @@ class HookHandler {
     // 如果是 bypassPermissions 模式，不需要用户确认
     if (data.permission_mode === 'bypassPermissions') {
       logger.debug('bypassPermissions 模式，跳过确认通知');
-      return;
+      return null;
     }
 
     // 提取关键信息
@@ -89,6 +104,7 @@ class HookHandler {
       toolName: data.tool_name,
       toolInput: data.tool_input,
       transcriptPath: data.transcript_path,
+      cwd: data.cwd,
       permissionMode: data.permission_mode,
       timestamp: Date.now()
     };
@@ -99,30 +115,45 @@ class HookHandler {
     // 切换状态
     this.setState(InteractionState.WAITING_CONFIRM);
 
-    // 使用 LLM 解析生成用户友好消息
-    try {
-      const message = await this.generatePreToolMessage(event);
+    // 生成权限 ID
+    const permissionId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-      // 发送到钉钉
-      if (this.onSendMessage) {
-        this.onSendMessage({
-          type: 'confirmation',
-          message: message,
-          event: event
-        });
-      }
+    // 使用 LLM 解析生成用户友好消息
+    let message;
+    try {
+      message = await this.generatePreToolMessage(event);
     } catch (error) {
       logger.error({ error: error.message }, '生成 PreToolUse 消息失败');
-
-      // 降级：发送简单消息
-      if (this.onSendMessage) {
-        this.onSendMessage({
-          type: 'confirmation',
-          message: this.generateSimplePreToolMessage(event),
-          event: event
-        });
-      }
+      message = this.generateSimplePreToolMessage(event);
     }
+
+    // 添加权限 ID 到消息
+    message += `\n\n**权限ID**: \`${permissionId}\``;
+    message += '\n\n请回复 **y** 允许 或 **n** 拒绝';
+
+    // 记录待处理的权限确认
+    this.pendingPermissions.set(permissionId, {
+      ...event,
+      permissionId,
+      state: PermissionState.PENDING,
+      createdAt: Date.now()
+    });
+
+    // 发送到钉钉
+    if (this.onSendMessage) {
+      this.onSendMessage({
+        type: 'permission_confirm',
+        message: message,
+        event: event,
+        permissionId: permissionId
+      });
+    }
+
+    // 返回给 Hook 脚本，告知需要等待用户确认
+    return {
+      permissionId,
+      needsConfirm: true
+    };
   }
 
   /**
@@ -212,6 +243,142 @@ class HookHandler {
     message += '请回复 **y** 确认 或 **n** 拒绝';
 
     return message;
+  }
+
+  /**
+   * 处理权限决策
+   * @param {object} data - 决策数据 { permissionId, decision }
+   * @returns {object} 处理结果
+   */
+  handlePermissionDecision(data) {
+    const { permissionId, decision } = data;
+    logger.info({ permissionId, decision }, '📋 收到权限决策');
+
+    const permissionInfo = this.pendingPermissions.get(permissionId);
+    if (!permissionInfo) {
+      logger.warn({ permissionId }, '未找到对应的权限请求');
+      return { success: false, error: 'permission_not_found' };
+    }
+
+    // 更新状态
+    permissionInfo.state = decision === 'allow' ? PermissionState.ALLOWED : PermissionState.DENIED;
+    permissionInfo.decidedAt = Date.now();
+
+    // 写入决策文件（供 Hook 脚本读取）
+    this.writePermissionDecision(permissionInfo.cwd, permissionId, decision);
+
+    // 清除上下文
+    this.hookContext.clear();
+
+    // 恢复运行状态
+    this.setState(InteractionState.RUNNING);
+
+    // 从待处理列表中移除
+    this.pendingPermissions.delete(permissionId);
+
+    return {
+      success: true,
+      permissionId,
+      decision
+    };
+  }
+
+  /**
+   * 写入权限决策文件
+   * @param {string} cwd - 工作目录
+   * @param {string} permissionId - 权限 ID
+   * @param {string} decision - 决策 (allow/deny)
+   */
+  writePermissionDecision(cwd, permissionId, decision) {
+    if (!cwd) return;
+
+    const permissionDir = path.join(cwd, '.claude', '.openhermit', 'permissions');
+    const decisionFile = path.join(permissionDir, `${permissionId}.decision`);
+
+    try {
+      // 确保目录存在
+      fs.mkdirSync(permissionDir, { recursive: true });
+
+      // 写入决策
+      fs.writeFileSync(decisionFile, decision);
+
+      logger.info({ permissionId, decision, decisionFile }, '✅ 权限决策文件已写入');
+    } catch (error) {
+      logger.error({ error: error.message, decisionFile }, '❌ 写入权限决策文件失败');
+    }
+  }
+
+  /**
+   * 处理权限超时
+   * @param {object} data - 超时数据 { permissionId, timeout }
+   * @returns {object} 处理结果
+   */
+  handlePermissionTimeout(data) {
+    const { permissionId, timeout } = data;
+    logger.warn({ permissionId, timeout }, '⏰ 权限确认超时');
+
+    const permissionInfo = this.pendingPermissions.get(permissionId);
+    if (permissionInfo) {
+      permissionInfo.state = PermissionState.TIMEOUT;
+      this.pendingPermissions.delete(permissionId);
+    }
+
+    return {
+      success: true,
+      permissionId,
+      timeout
+    };
+  }
+
+  /**
+   * 从钉钉消息中处理权限决策
+   * @param {string} message - 用户消息
+   * @returns {boolean} 是否是权限决策消息
+   */
+  processPermissionReply(message) {
+    const trimmed = message.trim().toLowerCase();
+
+    // 检查是否是 y/n 回复
+    if (trimmed !== 'y' && trimmed !== 'n' &&
+        trimmed !== 'yes' && trimmed !== 'no' &&
+        trimmed !== '允许' && trimmed !== '拒绝') {
+      return false;
+    }
+
+    // 找到最近的待处理权限请求
+    const pendingPermission = this.findLatestPendingPermission();
+    if (!pendingPermission) {
+      return false;
+    }
+
+    // 解析决策
+    const decision = (trimmed === 'y' || trimmed === 'yes' || trimmed === '允许') ? 'allow' : 'deny';
+
+    // 处理决策
+    this.handlePermissionDecision({
+      permissionId: pendingPermission.permissionId,
+      decision
+    });
+
+    return true;
+  }
+
+  /**
+   * 查找最近的待处理权限请求
+   * @returns {object|null}
+   */
+  findLatestPendingPermission() {
+    let latest = null;
+    let latestTime = 0;
+
+    for (const [id, info] of this.pendingPermissions.entries()) {
+      if (info.state === PermissionState.PENDING && info.createdAt > latestTime) {
+        latest = info;
+        latestTime = info.createdAt;
+      }
+    }
+
+    return latest;
   }
 
   /**

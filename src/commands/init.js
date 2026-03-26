@@ -4,7 +4,12 @@
  *
  * 用法:
  *   openhermit init                    # 全局注入 (~/.claude/settings.json)
- *   openhermit init /path/to/project   # 项目级别注入
+ *   openhermit init /path/to/project   # 项目用户本地级别 ({project}/.claude/settings.local.json)
+ *
+ * Claude Code 配置层级:
+ *   - ~/.claude/settings.json          # 用户全局级别
+ *   - {project}/.claude/settings.json  # 项目共享级别（提交到 git）
+ *   - {project}/.claude/settings.local.json  # 项目用户本地级别（不提交）
  */
 
 import fs from 'fs';
@@ -61,6 +66,19 @@ function getGlobalClaudeDir() {
  */
 function getProjectClaudeDir(projectPath) {
   return path.join(projectPath, '.claude');
+}
+
+/**
+ * 获取配置文件路径
+ * @param {string} targetDir - 目标目录
+ * @param {boolean} isProjectLevel - 是否是项目级别
+ * @returns {string}
+ */
+function getSettingsPath(targetDir, isProjectLevel) {
+  // 项目级别使用 settings.local.json（用户本地级别）
+  // 全局级别使用 settings.json
+  const settingsFileName = isProjectLevel ? 'settings.local.json' : 'settings.json';
+  return path.join(targetDir, settingsFileName);
 }
 
 /**
@@ -135,15 +153,19 @@ export async function initHermit(options = {}) {
   const targetDir = isProjectLevel
     ? getProjectClaudeDir(projectPath)
     : getGlobalClaudeDir();
-  const settingsPath = path.join(targetDir, 'settings.json');
+  const settingsPath = getSettingsPath(targetDir, isProjectLevel);
   const hooksDir = getHooksDir();
   const hermitHooks = generateHermitHooksConfig(hooksDir);
+
+  // 配置级别描述
+  const levelDesc = isProjectLevel ? '项目用户本地级别' : '全局';
 
   console.log('');
   console.log('🦀 OpenHermit Init');
   console.log('==================');
-  console.log(`📁 配置级别: ${isProjectLevel ? '项目级别' : '全局'}`);
+  console.log(`📁 配置级别: ${levelDesc}`);
   console.log(`📁 配置目录: ${targetDir}`);
+  console.log(`📁 配置文件: ${path.basename(settingsPath)}`);
   console.log(`📁 Hooks 目录: ${hooksDir}`);
   if (isProjectLevel) {
     console.log(`📁 项目路径: ${projectPath}`);
@@ -223,14 +245,19 @@ export async function initHermit(options = {}) {
  * @returns {object}
  */
 export function getInitStatus(projectPath = null) {
-  const targetDir = projectPath
+  const isProjectLevel = !!projectPath;
+  const targetDir = isProjectLevel
     ? getProjectClaudeDir(projectPath)
     : getGlobalClaudeDir();
-  const settingsPath = path.join(targetDir, 'settings.json');
+  const settingsPath = getSettingsPath(targetDir, isProjectLevel);
   const hooksDir = getHooksDir();
 
   if (!fs.existsSync(settingsPath)) {
-    return { initialized: false, reason: 'settings.json 不存在', settingsPath };
+    return {
+      initialized: false,
+      reason: `${path.basename(settingsPath)} 不存在`,
+      settingsPath
+    };
   }
 
   try {
@@ -241,7 +268,7 @@ export function getInitStatus(projectPath = null) {
       initialized: isHermitHooksInjected(settings, hooksDir),
       settingsPath,
       hooksDir,
-      isProjectLevel: !!projectPath
+      isProjectLevel
     };
   } catch (error) {
     return { initialized: false, reason: error.message, settingsPath };

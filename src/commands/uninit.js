@@ -1,6 +1,15 @@
 /**
  * openhermit uninit 命令
  * 从配置中移除 OpenHermit hooks（支持项目级别和全局）
+ *
+ * 用法:
+ *   openhermit uninit                    # 移除全局配置
+ *   openhermit uninit /path/to/project   # 移除项目用户本地级别配置
+ *
+ * Claude Code 配置层级:
+ *   - ~/.claude/settings.json          # 用户全局级别
+ *   - {project}/.claude/settings.json  # 项目共享级别（提交到 git）
+ *   - {project}/.claude/settings.local.json  # 项目用户本地级别（不提交）
  */
 
 import fs from 'fs';
@@ -25,6 +34,19 @@ function getGlobalClaudeDir() {
  */
 function getProjectClaudeDir(projectPath) {
   return path.join(projectPath, '.claude');
+}
+
+/**
+ * 获取配置文件路径
+ * @param {string} targetDir - 目标目录
+ * @param {boolean} isProjectLevel - 是否是项目级别
+ * @returns {string}
+ */
+function getSettingsPath(targetDir, isProjectLevel) {
+  // 项目级别使用 settings.local.json（用户本地级别）
+  // 全局级别使用 settings.json
+  const settingsFileName = isProjectLevel ? 'settings.local.json' : 'settings.json';
+  return path.join(targetDir, settingsFileName);
 }
 
 /**
@@ -85,14 +107,18 @@ export async function uninitHermit(options = {}) {
   const targetDir = isProjectLevel
     ? getProjectClaudeDir(projectPath)
     : getGlobalClaudeDir();
-  const settingsPath = path.join(targetDir, 'settings.json');
+  const settingsPath = getSettingsPath(targetDir, isProjectLevel);
   const hooksDir = getHooksDir();
+
+  // 配置级别描述
+  const levelDesc = isProjectLevel ? '项目用户本地级别' : '全局';
 
   console.log('');
   console.log('🦀 OpenHermit Uninit');
   console.log('====================');
-  console.log(`📁 配置级别: ${isProjectLevel ? '项目级别' : '全局'}`);
+  console.log(`📁 配置级别: ${levelDesc}`);
   console.log(`📁 配置目录: ${targetDir}`);
+  console.log(`📁 配置文件: ${path.basename(settingsPath)}`);
   if (isProjectLevel) {
     console.log(`📁 项目路径: ${projectPath}`);
   }
@@ -100,7 +126,7 @@ export async function uninitHermit(options = {}) {
 
   // 检查配置文件是否存在
   if (!fs.existsSync(settingsPath)) {
-    console.log('⚠️  settings.json 不存在，无需清理');
+    console.log(`⚠️  ${path.basename(settingsPath)} 不存在，无需清理`);
     return { success: true, nothingToClean: true };
   }
 
@@ -153,7 +179,7 @@ export async function uninitHermit(options = {}) {
   // 写回配置
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   console.log(`✅ 已移除 ${removedCount} 个 OpenHermit hooks`);
-  console.log('✅ Uninit 完成！');
+  console.log('✅ Uninit 完成!');
 
   console.log('');
   console.log('📖 提示:');
@@ -170,10 +196,11 @@ export async function uninitHermit(options = {}) {
  * @returns {object}
  */
 export function getUninitStatus(projectPath = null) {
-  const targetDir = projectPath
+  const isProjectLevel = !!projectPath;
+  const targetDir = isProjectLevel
     ? getProjectClaudeDir(projectPath)
     : getGlobalClaudeDir();
-  const settingsPath = path.join(targetDir, 'settings.json');
+  const settingsPath = getSettingsPath(targetDir, isProjectLevel);
   const hooksDir = getHooksDir();
 
   if (!fs.existsSync(settingsPath)) {
@@ -210,7 +237,7 @@ export function getUninitStatus(projectPath = null) {
       hasHermitHooks: hermitHookCount > 0,
       hermitHookCount,
       settingsPath,
-      isProjectLevel: !!projectPath
+      isProjectLevel
     };
   } catch (error) {
     return { hasHermitHooks: false, error: error.message };

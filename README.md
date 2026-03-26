@@ -168,13 +168,21 @@ openhermit
 | `openhermit` | 启动监控服务（接收 Hook 事件并推送钉钉） |
 | `openhermit init [项目路径]` | 初始化 hooks 配置（无参数为全局初始化） |
 | `openhermit init --force` | 强制重新初始化（覆盖现有配置） |
-| `openhermit uninit` | 移除 hooks 配置 |
+| `openhermit uninit [项目路径]` | 移除 hooks 配置 |
 | `openhermit -v, --version` | 显示版本号 |
 | `openhermit -h, --help` | 显示帮助信息 |
 
-**init 命令说明：**
-- `openhermit init` - 全局初始化，注入 hooks 到 `~/.claude/settings.json`（推荐）
-- `openhermit init ~/projects/myapp` - 为指定项目初始化
+**init 命令配置层级：**
+
+| 命令 | 配置文件 | 说明 |
+|------|----------|------|
+| `openhermit init` | `~/.claude/settings.json` | 全局级别，所有项目共享（推荐） |
+| `openhermit init ~/projects/myapp` | `{project}/.claude/settings.local.json` | 项目用户本地级别，不提交到 git |
+
+**配置文件优先级**（Claude Code 加载顺序）：
+1. 项目用户本地级别：`{project}/.claude/settings.local.json`（最高优先级）
+2. 项目共享级别：`{project}/.claude/settings.json`
+3. 用户全局级别：`~/.claude/settings.json`
 
 **监控模式优势**：
 - 不干扰正常工作流程

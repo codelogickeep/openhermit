@@ -38,15 +38,20 @@ OpenHermit (开源寄居蟹) v${packageJson.version} - Claude Code 钉钉监控�
 用法:
   openhermit                     启动监控服务
   openhermit init [项目路径]     初始化 hooks 配置
-                                 - 无参数: 注入到 ~/.claude/（全局）
-                                 - 带路径: 为指定项目初始化
-  openhermit uninit              移除 hooks 配置
+                                 - 无参数: 全局级别 (~/.claude/settings.json)
+                                 - 带路径: 项目用户本地级别 ({project}/.claude/settings.local.json)
+  openhermit uninit [项目路径]   移除 hooks 配置
   openhermit -v, --version       显示版本号
   openhermit -h, --help          显示帮助信息
 
+配置层级:
+  全局级别:     ~/.claude/settings.json           # 所有项目共享
+  项目共享:     {project}/.claude/settings.json   # 提交到 git
+  项目本地:     {project}/.claude/settings.local.json  # 不提交（推荐用于项目级）
+
 示例:
-  openhermit init                    # 全局初始化（推荐）
-  openhermit init ~/projects/myapp  # 为特定项目初始化
+  openhermit init                    # 全局初始化（推荐，所有项目生效）
+  openhermit init ~/projects/myapp  # 仅对 myapp 项目生效（写入 settings.local.json）
   openhermit                         # 启动监控服务
 
 使用流程:
@@ -188,6 +193,10 @@ class OpenHermit {
     this.ipcServer.on('command-processed', (data) => this.commandManager.handleCommandProcessed(data));
     this.ipcServer.on('command-timeout', (data) => this.commandManager.handleCommandTimeout(data));
 
+    // 注册权限确认相关 IPC 端点
+    this.ipcServer.on('permission-processed', (data) => this.hookHandler.handlePermissionDecision(data));
+    this.ipcServer.on('permission-timeout', (data) => this.hookHandler.handlePermissionTimeout(data));
+
     // 启动 IPC Server
     try {
       await this.ipcServer.start();
@@ -207,7 +216,14 @@ class OpenHermit {
   async handleDingTalkMessage(text, userId, meta) {
     logger.info({ text: text.substring(0, 50), userId, isVoice: meta.isVoiceMessage }, '📥 收到钉钉消息');
 
-    // 检查是否可以接收命令
+    // 1. 首先检查是否是权限确认回复 (y/n)
+    if (this.hookHandler.processPermissionReply(text)) {
+      logger.info('✅ 权限确认已处理');
+      await this.channel.send('✅ 权限确认已发送到 Claude Code', { immediate: true });
+      return;
+    }
+
+    // 2. 检查是否可以接收命令
     if (this.commandManager.canAcceptCommand()) {
       const session = this.commandManager.getActiveSession();
 

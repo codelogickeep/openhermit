@@ -177,28 +177,31 @@ class IPCServer {
       return;
     }
 
-    // 解析路由 - 支持 /hook/ 和 /command/ 前缀
+    // 解析路由 - 支持 /hook/, /command/, /permission/ 前缀
     const url = req.url;
     const hookMatch = url.match(/^\/hook\/(.+)$/);
     const commandMatch = url.match(/^\/command\/(.+)$/);
+    const permissionMatch = url.match(/^\/permission\/(.+)$/);
 
-    if (!hookMatch && !commandMatch) {
+    if (!hookMatch && !commandMatch && !permissionMatch) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not Found');
       return;
     }
 
-    // 对于 /command/ 前缀，事件类型添加 'command-' 前缀
-    // 例如：/command/processed -> 'command-processed'
+    // 确定事件类型和路由前缀
     let eventType;
     let routePrefix;
 
     if (hookMatch) {
       eventType = hookMatch[1];
       routePrefix = 'hook';
-    } else {
+    } else if (commandMatch) {
       eventType = `command-${commandMatch[1]}`;
       routePrefix = 'command';
+    } else {
+      eventType = `permission-${permissionMatch[1]}`;
+      routePrefix = 'permission';
     }
 
     // 读取请求体
@@ -227,12 +230,14 @@ class IPCServer {
 
         // 调用对应的事件处理器
         const handler = this.eventHandlers.get(eventType);
+        let handlerResult = null;
+
         if (handler) {
           try {
             // 支持 async 处理器
-            const result = handler(data);
-            if (result && typeof result.catch === 'function') {
-              result.catch(error => {
+            handlerResult = handler(data);
+            if (handlerResult && typeof handlerResult.catch === 'function') {
+              handlerResult.catch(error => {
                 logger.error({ eventType, error: error.message }, 'IPC 事件处理器执行失败');
               });
             }
@@ -243,9 +248,16 @@ class IPCServer {
           logger.debug({ eventType }, '没有注册的事件处理器');
         }
 
-        // 立即返回 200 OK（避免阻塞 Claude Code）
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('OK');
+        // 根据事件类型返回响应
+        // PreToolUse 事件可能需要返回 JSON 响应（包含 permissionId）
+        if (eventType === 'pre-tool' && handlerResult && typeof handlerResult === 'object') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(handlerResult));
+        } else {
+          // 默认返回 200 OK
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end('OK');
+        }
 
       } catch (error) {
         logger.error({ eventType, error: error.message }, 'IPC 事件解析失败');

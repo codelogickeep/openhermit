@@ -112,7 +112,7 @@ describe('HookHandler', () => {
 
       expect(onSendMessage).toHaveBeenCalled();
       const call = onSendMessage.mock.calls[0][0];
-      expect(call.type).toBe('confirmation');
+      expect(call.type).toBe('permission_confirm');
       expect(call.message).toContain('Bash');
     });
   });
