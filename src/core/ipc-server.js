@@ -170,6 +170,13 @@ class IPCServer {
    * @param {object} res - HTTP 响应对象
    */
   handleRequest(req, res) {
+    // 健康检查端点（支持 GET 和 HEAD）
+    if (req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', port: this.port }));
+      return;
+    }
+
     // 只处理 POST 请求
     if (req.method !== 'POST') {
       res.writeHead(405, { 'Content-Type': 'text/plain' });

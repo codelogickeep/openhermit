@@ -36,6 +36,16 @@ if [ -n "$CWD" ]; then
   # 等待 IPC 通知完成
   wait
 
+  # 检测 OpenHermit IPC 服务是否可用
+  # 如果服务不可用，直接退出，不阻塞等待
+  HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${IPC_PORT}/health" --connect-timeout 1 --max-time 2 2>/dev/null)
+  if [ "$HEALTH_CHECK" != "200" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] OpenHermit 服务未运行，直接退出" >> "$DEBUG_LOG"
+    exit 0
+  fi
+
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] OpenHermit 服务可用，开始轮询命令" >> "$DEBUG_LOG"
+
   while [ $ELAPSED -lt $TIMEOUT ]; do
     # 检查命令目录是否存在且有命令文件
     if [ -d "$COMMAND_DIR" ] && ls "$COMMAND_DIR"/*.txt 1>/dev/null 2>&1; then
