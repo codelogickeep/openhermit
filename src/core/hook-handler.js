@@ -482,8 +482,8 @@ Claude Code 任务完成，正在等待您的指令。
     const lastMessage = data.last_assistant_message || '';
     const taskSummary = this.extractTaskSummary(lastMessage);
 
-    // 用 LLM 智能判断是否需要用户输入（降级为规则判断）
-    const needsUserInput = await this.detectUserInputRequired(taskSummary);
+    // 用 LLM 智能判断是否需要用户输入（传完整消息，降级为规则判断）
+    const needsUserInput = await this.detectUserInputRequired(lastMessage);
 
     const event = {
       hookType: 'Stop',
