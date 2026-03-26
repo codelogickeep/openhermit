@@ -13,15 +13,37 @@ IPC_PORT="${HERMIT_IPC_PORT:-31337}"
 CWD=$(echo "$HOOK_DATA" | jq -r '.cwd // empty')
 SESSION_ID=$(echo "$HOOK_DATA" | jq -r '.session_id // empty')
 
-# 发送事件到 IPC 服务（异步，不阻塞）
-curl -s -X POST "http://127.0.0.1:${IPC_PORT}/hook/stop" \
+# 调试日志
+if [ -n "$CWD" ]; then
+  DEBUG_LOG="$CWD/.claude/stop-debug.log"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Stop Hook 触发" >> "$DEBUG_LOG"
+fi
+
+# 同步发送事件到 IPC 服务，获取响应判断是否需要等待用户输入
+IPC_RESPONSE=$(curl -s -X POST "http://127.0.0.1:${IPC_PORT}/hook/stop" \
   -H "Content-Type: application/json" \
   -d "${HOOK_DATA}" \
-  --connect-timeout 1 \
-  --max-time 3 \
-  2>/dev/null &
+  --connect-timeout 2 \
+  --max-time 5 \
+  2>/dev/null)
 
-# 如果有工作目录，检查是否有待执行的命令
+# 解析响应
+NEEDS_USER_INPUT=$(echo "$IPC_RESPONSE" | jq -r '.needsUserInput // false')
+
+# 调试日志
+if [ -n "$DEBUG_LOG" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] IPC 响应: needsUserInput=$NEEDS_USER_INPUT" >> "$DEBUG_LOG"
+fi
+
+# 如果不需要用户交互，直接退出
+if [ "$NEEDS_USER_INPUT" != "true" ]; then
+  if [ -n "$DEBUG_LOG" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 无需用户交互，直接退出" >> "$DEBUG_LOG"
+  fi
+  exit 0
+fi
+
+# 需要用户交互，进入轮询模式
 if [ -n "$CWD" ]; then
   # 命令目录：项目目录下的 .claude/.openhermit/commands/
   COMMAND_DIR="$CWD/.claude/.openhermit/commands"

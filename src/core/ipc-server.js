@@ -256,8 +256,12 @@ class IPCServer {
         }
 
         // 根据事件类型返回响应
-        // PreToolUse 事件可能需要返回 JSON 响应（包含 permissionId）
+        // PreToolUse 和 Stop 事件可能需要返回 JSON 响应
         if (eventType === 'pre-tool' && handlerResult && typeof handlerResult === 'object') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(handlerResult));
+        } else if (eventType === 'stop' && handlerResult && typeof handlerResult === 'object') {
+          // Stop 事件返回 needsUserInput 标志
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(handlerResult));
         } else {

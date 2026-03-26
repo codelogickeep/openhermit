@@ -530,6 +530,9 @@ Claude Code 任务完成，正在等待您的指令。
     } else if (!needsUserInput) {
       logger.info('任务完成，无需用户交互，静默放行');
     }
+
+    // 返回 needsUserInput 标志，供 Stop Hook 决定是否轮询
+    return { needsUserInput };
   }
 
   /**
