@@ -21,6 +21,16 @@ if [ -n "$CWD" ]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] PreToolUse: tool=$TOOL_NAME, mode=$PERMISSION_MODE" >> "$DEBUG_LOG"
 fi
 
+# 检测 OpenHermit IPC 服务是否可用
+# 如果服务不可用，直接放行，不阻塞
+HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${IPC_PORT}/health" --connect-timeout 1 --max-time 2 2>/dev/null)
+if [ "$HEALTH_CHECK" != "200" ]; then
+  if [ -n "$CWD" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] OpenHermit 服务未运行，直接放行" >> "$DEBUG_LOG"
+  fi
+  exit 0
+fi
+
 # 如果是 bypassPermissions 模式，直接允许
 if [ "$PERMISSION_MODE" = "bypassPermissions" ]; then
   # 发送事件到 IPC（用于日志记录）
