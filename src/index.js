@@ -177,6 +177,8 @@ class OpenHermit {
     };
     this.commandManager.onCommandProcessed = (commandInfo) => {
       logger.info({ commandId: commandInfo.commandId }, '✅ 命令已被 Claude Code 执行');
+      // 发送确认消息到钉钉
+      this.channel.send(`## ✅ 命令已执行\n\n**指令**: ${commandInfo.command}\n\nClaude Code 正在执行...`, { immediate: true });
     };
 
     // 监听钉钉消息
