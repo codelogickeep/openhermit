@@ -23,6 +23,7 @@ export const Prompts = {
 
   // 交互检测
   analyzeOutput: InteractionPrompts.analyzeOutput,
+  analyzeStopEvent: InteractionPrompts.analyzeStopEvent,
   parseReply: InteractionPrompts.parseReply,
   parseSelection: InteractionPrompts.parseSelection,
   mapSelection: InteractionPrompts.mapSelection,

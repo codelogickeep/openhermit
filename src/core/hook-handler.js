@@ -482,9 +482,8 @@ Claude Code 任务完成，正在等待您的指令。
     const lastMessage = data.last_assistant_message || '';
     const taskSummary = this.extractTaskSummary(lastMessage);
 
-    // 用 taskSummary（纯文本摘要）检测是否需要用户输入
-    // 避免Markdown表格中的版本号等被误判
-    const needsUserInput = this.detectUserInputRequired(taskSummary);
+    // 用 LLM 智能判断是否需要用户输入（降级为规则判断）
+    const needsUserInput = await this.detectUserInputRequired(taskSummary);
 
     const event = {
       hookType: 'Stop',
@@ -557,11 +556,51 @@ Claude Code 任务完成，正在等待您的指令。
   }
 
   /**
-   * 检测消息是否需要用户输入
+   * 检测消息是否需要用户输入（使用 LLM 智能判断）
+   * @param {string} message - 消息内容
+   * @returns {Promise<boolean>}
+   */
+  async detectUserInputRequired(message) {
+    if (!message) return false;
+
+    // 尝试使用 LLM 智能判断
+    if (this.llmClient.isAvailable()) {
+      try {
+        const prompt = HookEventPrompts.analyzeStopEvent.replace('{{lastMessage}}', message);
+
+        logger.info({ messageLength: message.length }, '🤖 使用 LLM 判断是否需要用户交互');
+
+        const response = await this.llmClient.chat(prompt, {
+          temperature: 0.1,
+          maxTokens: 200,
+          timeout: 10000,
+          systemPrompt: '你是一个任务状态分析助手，只返回 JSON 格式结果。'
+        });
+
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const result = JSON.parse(jsonMatch[0]);
+          logger.info({
+            needsUserInput: result.needsUserInput,
+            reason: result.reason
+          }, '✅ LLM 判断结果');
+          return result.needsUserInput === true;
+        }
+      } catch (error) {
+        logger.warn({ error: error.message }, 'LLM 判断失败，使用规则降级');
+      }
+    }
+
+    // 降级：规则判断
+    return this.fallbackDetectUserInput(message);
+  }
+
+  /**
+   * 降级：规则检测消息是否需要用户输入
    * @param {string} message - 消息内容
    * @returns {boolean}
    */
-  detectUserInputRequired(message) {
+  fallbackDetectUserInput(message) {
     if (!message) return false;
 
     // 检测选项列表 (1. 2. 3. 或 1、2、3、)
