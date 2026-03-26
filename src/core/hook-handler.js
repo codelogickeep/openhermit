@@ -480,9 +480,11 @@ Claude Code 任务完成，正在等待您的指令。
 
     // 提取任务信息
     const lastMessage = data.last_assistant_message || '';
+    const taskSummary = this.extractTaskSummary(lastMessage);
 
-    // 检测是否需要用户输入
-    const needsUserInput = this.detectUserInputRequired(lastMessage);
+    // 用 taskSummary（纯文本摘要）检测是否需要用户输入
+    // 避免Markdown表格中的版本号等被误判
+    const needsUserInput = this.detectUserInputRequired(taskSummary);
 
     const event = {
       hookType: 'Stop',
@@ -493,7 +495,7 @@ Claude Code 任务完成，正在等待您的指令。
       transcriptPath: data.transcript_path,
       lastAssistantMessage: lastMessage,
       needsUserInput: needsUserInput,
-      taskSummary: this.extractTaskSummary(lastMessage),
+      taskSummary: taskSummary,
       timestamp: Date.now()
     };
 

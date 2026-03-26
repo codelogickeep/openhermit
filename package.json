@@ -1,6 +1,6 @@
 {
   "name": "@codelogickeep/open-hermit",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "OpenHermit (开源寄居蟹) - Claude Code 钉钉监控服务。接收 Claude Code Hook 事件，推送到钉钉。",
   "main": "src/index.js",
   "bin": {
