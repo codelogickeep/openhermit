@@ -516,14 +516,17 @@ Claude Code 任务完成，正在等待您的指令。
     // 清除 Hook 上下文（保留会话信息）
     this.hookContext.clear();
 
-    // 发送完成通知
-    if (this.onSendMessage) {
+    // 只有需要用户输入时才发送钉钉消息
+    // 不需要用户交互的任务静默完成，不打扰用户
+    if (needsUserInput && this.onSendMessage) {
       const message = this.generateTaskCompletedMessage(event);
       this.onSendMessage({
         type: 'completed',
         message: message,
         event: event
       });
+    } else if (!needsUserInput) {
+      logger.info('任务完成，无需用户交互，静默放行');
     }
   }
 

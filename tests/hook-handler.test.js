@@ -158,13 +158,14 @@ describe('HookHandler', () => {
       expect(handler.getState()).toBe(InteractionState.COMPLETED);
     });
 
-    it('应该发送完成消息', async () => {
+    it('需要用户输入时应该发送完成消息', async () => {
       const onSendMessage = vi.fn();
       handler.setCallbacks({ onSendMessage });
 
       const data = {
         session_id: 'test-session',
-        stop_reason: 'end_turn'
+        stop_reason: 'end_turn',
+        last_assistant_message: '请选择：1. 选项A  2. 选项B'
       };
 
       await handler.handleStop(data);
@@ -172,7 +173,22 @@ describe('HookHandler', () => {
       expect(onSendMessage).toHaveBeenCalled();
       const call = onSendMessage.mock.calls[0][0];
       expect(call.type).toBe('completed');
-      expect(call.message).toContain('✅');
+      expect(call.message).toContain('等待');
+    });
+
+    it('不需要用户输入时应该静默放行', async () => {
+      const onSendMessage = vi.fn();
+      handler.setCallbacks({ onSendMessage });
+
+      const data = {
+        session_id: 'test-session',
+        stop_reason: 'end_turn',
+        last_assistant_message: '任务已完成，代码已提交。'
+      };
+
+      await handler.handleStop(data);
+
+      expect(onSendMessage).not.toHaveBeenCalled();
     });
   });
 
