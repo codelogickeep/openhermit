@@ -480,7 +480,9 @@ Claude Code 任务完成，正在等待您的指令。
 
     // 提取任务信息
     const lastMessage = data.last_assistant_message || '';
-    const taskSummary = this.extractTaskSummary(lastMessage);
+
+    // 检测是否需要用户输入
+    const needsUserInput = this.detectUserInputRequired(lastMessage);
 
     const event = {
       hookType: 'Stop',
@@ -489,7 +491,9 @@ Claude Code 任务完成，正在等待您的指令。
       projectName: data.cwd ? path.basename(data.cwd) : 'unknown',
       stopReason: data.stop_reason,
       transcriptPath: data.transcript_path,
-      taskSummary: taskSummary,
+      lastAssistantMessage: lastMessage,
+      needsUserInput: needsUserInput,
+      taskSummary: this.extractTaskSummary(lastMessage),
       timestamp: Date.now()
     };
 
@@ -545,12 +549,46 @@ Claude Code 任务完成，正在等待您的指令。
   }
 
   /**
+   * 检测消息是否需要用户输入
+   * @param {string} message - 消息内容
+   * @returns {boolean}
+   */
+  detectUserInputRequired(message) {
+    if (!message) return false;
+
+    // 检测选项列表 (1. 2. 3. 或 1、2、3、)
+    if (/\d+[\.、\)]\s+/.test(message)) return true;
+
+    // 检测问题结尾
+    if (/？$|[?？]$/.test(message)) return true;
+
+    // 检测确认提示 (y/n, 确认, 选择)
+    if (/\(y\/n\)|\[y\/n\]|确认|选择|请(选择|回复|输入)/.test(message)) return true;
+
+    return false;
+  }
+
+  /**
    * 生成任务完成消息
    * @param {object} event - 事件数据
    * @returns {string}
    */
   generateTaskCompletedMessage(event) {
     const projectName = event.projectName || '未知项目';
+
+    // 如果需要用户输入，发送完整消息
+    if (event.needsUserInput && event.lastAssistantMessage) {
+      return `## ⏳ 等待您的选择
+
+**项目**: \`${projectName}\`
+
+${event.lastAssistantMessage}
+
+---
+请直接回复选项编号或内容。`;
+    }
+
+    // 否则发送简化摘要
     return `## ✅ 任务完成
 
 **项目**: \`${projectName}\`
