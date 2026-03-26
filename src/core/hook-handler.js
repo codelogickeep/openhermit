@@ -441,13 +441,11 @@ class HookHandler {
    */
   generateWaitingInputMessage(event) {
     const projectName = event.cwd ? path.basename(event.cwd) : '未知项目';
-    return `## ⏳ 等待输入
+    return `## ✅ 任务完成
 
 **项目**: \`${projectName}\`
 
-Claude Code 任务完成，正在等待您的指令。
-
-发送消息后，命令将在 Claude Code 下次停止时执行。`;
+等待您的下一条指令。`;
   }
 
   /**
