@@ -51,7 +51,7 @@
     "dingtalk-stream-sdk-nodejs": "^2.0.4",
     "dotenv": "^16.3.1",
     "lodash.debounce": "^4.0.8",
-    "pino": "^8.17.2",
+    "pino": "^10.3.1",
     "pino-pretty": "^10.3.1"
   },
   "devDependencies": {
